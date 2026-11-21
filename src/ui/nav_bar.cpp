@@ -7,8 +7,16 @@
 #include "../components/m3_keyboard.h"
 #include "../components/m3_widgets.h"
 
+static constexpr int16_t MENU_POPUP_W       = 184;
+static constexpr int16_t MENU_POPUP_H       = 226;
+static constexpr int16_t MENU_POPUP_MARGIN  = 6;
+static constexpr int16_t MENU_POPUP_PAD_HOR = 8;
+static constexpr int16_t MENU_POPUP_PAD_VER = 7;
+static constexpr int16_t MENU_POPUP_GAP     = 5;
+static constexpr int16_t MENU_ROW_COUNT     = 5;
+static constexpr int16_t MENU_ROW_H         = 38;
+
 static lv_obj_t* s_bar = nullptr;
-static lv_obj_t* s_topLine = nullptr;
 static lv_obj_t* s_backLbl = nullptr;
 static lv_obj_t* s_homeLbl = nullptr;
 static lv_obj_t* s_menuBars[3] = {};
@@ -107,15 +115,11 @@ void navBarInit() {
     s_bar = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_bar, w, M3Dim::NAV_BAR_H);
     lv_obj_set_pos(s_bar, 0, h - M3Dim::NAV_BAR_H);
+    lv_obj_set_style_bg_opa(s_bar, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_bar, 0, 0);
     lv_obj_set_style_radius(s_bar, 0, 0);
     lv_obj_set_style_pad_all(s_bar, 0, 0);
     lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_topLine = lv_obj_create(s_bar);
-    lv_obj_set_size(s_topLine, w, 1);
-    lv_obj_align(s_topLine, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_border_width(s_topLine, 0, 0);
 
     // 3 evenly spaced Android buttons: Back | Home | Menu
     lv_obj_t* bBack = createNavSlot(s_bar, 8, backBtnCb);
@@ -142,34 +146,37 @@ void navBarInit() {
 
     // Sleek Menu Popup above the bottom bar
     s_menuPopup = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_menuPopup, 176, 174);
-    lv_obj_set_pos(s_menuPopup, w - 184, h - M3Dim::NAV_BAR_H - 180);
+    lv_obj_set_size(s_menuPopup, MENU_POPUP_W, MENU_POPUP_H);
+    lv_obj_set_pos(s_menuPopup, w - MENU_POPUP_W - 8, h - M3Dim::NAV_BAR_H - MENU_POPUP_H - MENU_POPUP_MARGIN);
     lv_obj_set_style_radius(s_menuPopup, 16, 0);
     lv_obj_set_style_border_width(s_menuPopup, 1, 0);
-    lv_obj_set_style_pad_all(s_menuPopup, 8, 0);
+    lv_obj_set_style_pad_hor(s_menuPopup, MENU_POPUP_PAD_HOR, 0);
+    lv_obj_set_style_pad_ver(s_menuPopup, MENU_POPUP_PAD_VER, 0);
     lv_obj_set_flex_flow(s_menuPopup, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_menuPopup, 5, 0);
+    lv_obj_set_style_pad_row(s_menuPopup, MENU_POPUP_GAP, 0);
     lv_obj_clear_flag(s_menuPopup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_menuPopup, LV_OBJ_FLAG_HIDDEN);
 
-    const char* items[5] = {
+    const char* items[MENU_ROW_COUNT] = {
         LV_SYMBOL_DOWN "  Quick Settings",
         LV_SYMBOL_EYE_OPEN "  Toggle Theme",
         LV_SYMBOL_SETTINGS "  Settings",
         LV_SYMBOL_CHARGE "  System Info",
         LV_SYMBOL_CLOSE "  Close App"
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < MENU_ROW_COUNT; ++i) {
         lv_obj_t* row = lv_btn_create(s_menuPopup);
-        lv_obj_set_size(row, LV_PCT(100), 28);
-        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_size(row, LV_PCT(100), MENU_ROW_H);
+        lv_obj_set_style_radius(row, 12, 0);
+        lv_obj_set_style_pad_hor(row, 10, 0);
+        lv_obj_set_style_pad_ver(row, 0, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
         lv_obj_add_event_cb(row, menuItemCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
 
         lv_obj_t* lbl = lv_label_create(row);
         lv_label_set_text(lbl, items[i]);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 2, 0);
     }
 
     navBarRefreshTheme();
@@ -177,9 +184,6 @@ void navBarInit() {
 
 void navBarRefreshTheme() {
     if (!s_bar) return;
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(m3SurfaceHex()), 0);
-    lv_obj_set_style_bg_color(s_topLine, lv_color_hex(m3OutlineHex()), 0);
-    lv_obj_set_style_bg_opa(s_topLine, LV_OPA_50, 0);
 
     lv_color_t fg = lv_color_hex(m3TextPrimaryHex());
     lv_obj_set_style_text_color(s_backLbl, fg, 0);
