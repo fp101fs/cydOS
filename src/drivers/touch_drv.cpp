@@ -120,6 +120,7 @@ void touchInit() {
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type = LV_INDEV_TYPE_POINTER;
     s_indev_drv.read_cb = lvglTouchReadCb;
+    s_indev_drv.scroll_limit = 22;
     lv_indev_drv_register(&s_indev_drv);
 }
 

@@ -25,7 +25,6 @@
 /* HAL settings */
 #define LV_DISP_DEF_REFR_PERIOD 16      /* ~60 FPS target */
 #define LV_INDEV_DEF_READ_PERIOD 20     /* 50 Hz touch polling */
-#define LV_INDEV_DEF_SCROLL_LIMIT 20    /* Resistive touch jitter tolerance */
 #define LV_TICK_CUSTOM 1
 #if LV_TICK_CUSTOM
     #define LV_TICK_CUSTOM_INCLUDE "Arduino.h"
