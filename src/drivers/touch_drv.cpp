@@ -46,16 +46,28 @@ static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
     return true;
 }
 
-bool touchReadPoint(TouchPoint& out) {
-    out.pressed = false;
+static bool xptSampleFiltered(uint16_t& rx, uint16_t& ry) {
     uint16_t rx1, ry1, rz1;
     if (!xptSample(rx1, ry1, rz1)) return false;
 
     uint16_t rx2, ry2, rz2;
     if (!xptSample(rx2, ry2, rz2)) return false;
 
-    uint16_t rx = (rx1 + rx2) / 2;
-    uint16_t ry = (ry1 + ry2) / 2;
+    int16_t dx = (int16_t)rx1 - (int16_t)rx2;
+    int16_t dy = (int16_t)ry1 - (int16_t)ry2;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    if (dx > TOUCH_SAMPLE_MAX_DELTA || dy > TOUCH_SAMPLE_MAX_DELTA) return false;
+
+    rx = (uint16_t)((rx1 + rx2) / 2);
+    ry = (uint16_t)((ry1 + ry2) / 2);
+    return true;
+}
+
+bool touchReadPoint(TouchPoint& out) {
+    out.pressed = false;
+    uint16_t rx, ry;
+    if (!xptSampleFiltered(rx, ry)) return false;
 
     int16_t w = (int16_t)displayWidth();
     int16_t h = (int16_t)displayHeight();
@@ -112,8 +124,9 @@ void touchInit() {
         }
         prefs.end();
     }
-    Serial.printf("[TOUCH] cal loaded=%d x0=%d x1=%d y0=%d y1=%d Z_MIN=%d\n",
-                  s_calLoaded ? 1 : 0, s_calX0, s_calX1, s_calY0, s_calY1, TOUCH_Z_MIN);
+    Serial.printf("[TOUCH] cal loaded=%d x0=%d x1=%d y0=%d y1=%d Z_MIN=%d MAX_DELTA=%d\n",
+                  s_calLoaded ? 1 : 0, s_calX0, s_calX1, s_calY0, s_calY1,
+                  TOUCH_Z_MIN, TOUCH_SAMPLE_MAX_DELTA);
 
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -127,12 +140,12 @@ bool touchIsCalibrated() { return s_calLoaded; }
 static void waitTap(uint16_t& x, uint16_t& y) {
     while (true) {
         uint16_t rx, ry, rz;
-        if (xptSample(rx, ry, rz)) {
+        if (xptSampleFiltered(rx, ry)) {
             delay(30);
             uint32_t ax = 0, ay = 0;
             uint16_t n = 0;
             for (int i = 0; i < 8; ++i) {
-                if (xptSample(rx, ry, rz)) {
+                if (xptSampleFiltered(rx, ry)) {
                     ax += rx;
                     ay += ry;
                     n++;
