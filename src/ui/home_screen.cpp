@@ -9,6 +9,17 @@
 static constexpr uint8_t APPS_PER_PAGE = 8;
 static constexpr uint8_t MAX_PAGES = (APP_MAX_COUNT + APPS_PER_PAGE - 1) / APPS_PER_PAGE;
 
+static constexpr int16_t GLANCE_Y     = 26;
+static constexpr int16_t GLANCE_H     = 26;
+static constexpr int16_t PAGER_Y      = 56;
+static constexpr int16_t PAGER_H      = 152;
+static constexpr int16_t TILE_W       = 56;
+static constexpr int16_t TILE_H       = 70;
+static constexpr int16_t ICON_BOX_SZ  = 52;
+static constexpr int16_t TILE_STEP_X  = 58;
+static constexpr int16_t TILE_START_Y = 3;
+static constexpr int16_t TILE_STEP_Y  = 76;
+
 static lv_obj_t* s_home = nullptr;
 static lv_obj_t* s_orb1 = nullptr;
 static lv_obj_t* s_orb2 = nullptr;
@@ -17,6 +28,8 @@ static lv_obj_t* s_dots[MAX_PAGES] = {};
 static uint8_t s_pageCount = 1;
 static uint8_t s_currentPage = 0;
 static lv_obj_t* s_atGlanceDate = nullptr;
+static lv_obj_t* s_weatherSun = nullptr;
+static lv_obj_t* s_weatherCloud = nullptr;
 static lv_obj_t* s_atGlanceWeather = nullptr;
 static lv_obj_t* s_searchBar = nullptr;
 static lv_obj_t* s_searchHint = nullptr;
@@ -89,7 +102,7 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
     if (!meta) return nullptr;
 
     lv_obj_t* wrap = lv_obj_create(parent);
-    lv_obj_set_size(wrap, 54, 62);
+    lv_obj_set_size(wrap, TILE_W, TILE_H);
     lv_obj_set_pos(wrap, x, y);
     lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wrap, 0, 0);
@@ -100,20 +113,20 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
     lv_obj_add_event_cb(wrap, appIconLongPressCb, LV_EVENT_LONG_PRESSED, (void*)meta);
 
     lv_obj_t* icoBox = lv_obj_create(wrap);
-    lv_obj_set_size(icoBox, 44, 44);
+    lv_obj_set_size(icoBox, ICON_BOX_SZ, ICON_BOX_SZ);
     lv_obj_align(icoBox, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(icoBox, lv_color_hex(meta->containerHex), 0);
     lv_obj_set_style_bg_opa(icoBox, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(icoBox, 1, 0);
     lv_obj_set_style_border_color(icoBox, lv_color_hex(meta->accentHex), 0);
     lv_obj_set_style_border_opa(icoBox, LV_OPA_30, 0);
-    lv_obj_set_style_radius(icoBox, 14, 0);
+    lv_obj_set_style_radius(icoBox, M3Dim::RADIUS_CARD, 0);
     lv_obj_clear_flag(icoBox, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* ico = lv_label_create(icoBox);
     lv_label_set_text(ico, meta->icon);
     lv_obj_set_style_text_color(ico, lv_color_hex(meta->accentHex), 0);
-    lv_obj_set_style_text_font(ico, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(ico, &lv_font_montserrat_20, 0);
     lv_obj_center(ico);
 
     lv_obj_t* lbl = lv_label_create(wrap);
@@ -156,13 +169,17 @@ void homeScreenInit() {
     lv_obj_set_style_radius(s_orb2, M3Dim::RADIUS_PILL, 0);
     lv_obj_clear_flag(s_orb2, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    // 1. At-a-Glance Widget (y = 28..72)
+    // 1. Compact single-line At-a-Glance Widget (y = 26..52)
     lv_obj_t* glance = lv_obj_create(s_home);
-    lv_obj_set_size(glance, w - 24, 44);
-    lv_obj_set_pos(glance, 12, 28);
+    lv_obj_set_size(glance, w - 24, GLANCE_H);
+    lv_obj_set_pos(glance, 12, GLANCE_Y);
     lv_obj_set_style_bg_opa(glance, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(glance, 0, 0);
-    lv_obj_set_style_pad_all(glance, 2, 0);
+    lv_obj_set_style_pad_all(glance, 0, 0);
+    lv_obj_set_style_pad_left(glance, 2, 0);
+    lv_obj_set_flex_flow(glance, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(glance, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(glance, 10, 0);
     lv_obj_clear_flag(glance, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(glance, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(glance, atGlanceClickCb, LV_EVENT_CLICKED, nullptr);
@@ -170,17 +187,49 @@ void homeScreenInit() {
     s_atGlanceDate = lv_label_create(glance);
     lv_label_set_text(s_atGlanceDate, "Sat, Nov 21");
     lv_obj_set_style_text_font(s_atGlanceDate, &lv_font_montserrat_16, 0);
-    lv_obj_align(s_atGlanceDate, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    s_atGlanceWeather = lv_label_create(glance);
-    lv_label_set_text(s_atGlanceWeather, LV_SYMBOL_CHARGE "  24°C  Partly Cloudy");
-    lv_obj_set_style_text_font(s_atGlanceWeather, &lv_font_montserrat_12, 0);
-    lv_obj_align(s_atGlanceWeather, LV_ALIGN_BOTTOM_LEFT, 0, -2);
+    // Inline weather cluster (simple sun+cloud icon + temperature) just to the right of date
+    lv_obj_t* weatherGroup = lv_obj_create(glance);
+    lv_obj_set_size(weatherGroup, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(weatherGroup, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(weatherGroup, 0, 0);
+    lv_obj_set_style_pad_all(weatherGroup, 0, 0);
+    lv_obj_set_flex_flow(weatherGroup, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(weatherGroup, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(weatherGroup, 4, 0);
+    lv_obj_clear_flag(weatherGroup, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    // 2. Dynamic N-Page 4x2 App Grid (y = 76..208)
+    lv_obj_t* weatherIco = lv_obj_create(weatherGroup);
+    lv_obj_set_size(weatherIco, 16, 14);
+    lv_obj_set_style_bg_opa(weatherIco, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(weatherIco, 0, 0);
+    lv_obj_set_style_pad_all(weatherIco, 0, 0);
+    lv_obj_clear_flag(weatherIco, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    s_weatherSun = lv_obj_create(weatherIco);
+    lv_obj_set_size(s_weatherSun, 9, 9);
+    lv_obj_set_pos(s_weatherSun, 0, 1);
+    lv_obj_set_style_bg_opa(s_weatherSun, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_weatherSun, 0, 0);
+    lv_obj_set_style_radius(s_weatherSun, M3Dim::RADIUS_PILL, 0);
+    lv_obj_clear_flag(s_weatherSun, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    s_weatherCloud = lv_obj_create(weatherIco);
+    lv_obj_set_size(s_weatherCloud, 11, 6);
+    lv_obj_set_pos(s_weatherCloud, 5, 7);
+    lv_obj_set_style_bg_opa(s_weatherCloud, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_weatherCloud, 0, 0);
+    lv_obj_set_style_radius(s_weatherCloud, M3Dim::RADIUS_PILL, 0);
+    lv_obj_clear_flag(s_weatherCloud, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    s_atGlanceWeather = lv_label_create(weatherGroup);
+    lv_label_set_text(s_atGlanceWeather, "24°C");
+    lv_obj_set_style_text_font(s_atGlanceWeather, &lv_font_montserrat_14, 0);
+
+    // 2. Dynamic N-Page 4x2 App Grid (y = 56..208)
     s_pager = lv_obj_create(s_home);
-    lv_obj_set_size(s_pager, w, 132);
-    lv_obj_set_pos(s_pager, 0, 76);
+    lv_obj_set_size(s_pager, w, PAGER_H);
+    lv_obj_set_pos(s_pager, 0, PAGER_Y);
     lv_obj_set_style_bg_opa(s_pager, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_pager, 0, 0);
     lv_obj_set_style_pad_all(s_pager, 0, 0);
@@ -193,9 +242,12 @@ void homeScreenInit() {
     s_pageCount = (totalApps == 0) ? 1 : (uint8_t)((totalApps + APPS_PER_PAGE - 1) / APPS_PER_PAGE);
     if (s_pageCount > MAX_PAGES) s_pageCount = MAX_PAGES;
 
+    int16_t gridW = 3 * TILE_STEP_X + TILE_W;
+    int16_t tileStartX = (int16_t)(((int16_t)w - gridW) / 2);
+
     for (uint8_t p = 0; p < s_pageCount; ++p) {
         lv_obj_t* pageObj = lv_obj_create(s_pager);
-        lv_obj_set_size(pageObj, w, 132);
+        lv_obj_set_size(pageObj, w, PAGER_H);
         lv_obj_set_pos(pageObj, (lv_coord_t)(p * w), 0);
         lv_obj_set_style_bg_opa(pageObj, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(pageObj, 0, 0);
@@ -207,7 +259,8 @@ void homeScreenInit() {
             const AppMeta* meta = appGetAt(startIdx + i);
             int col = i % 4;
             int row = i / 4;
-            createAppTile(pageObj, meta, 10 + col * 56, 2 + row * 65);
+            createAppTile(pageObj, meta, (int16_t)(tileStartX + col * TILE_STEP_X),
+                          (int16_t)(TILE_START_Y + row * TILE_STEP_Y));
         }
     }
 
@@ -271,6 +324,12 @@ void homeScreenRefreshTheme() {
     lv_obj_set_style_bg_color(s_orb1, lv_color_hex(g_sys.lightMode ? 0xD7E3FC : 0x16243D), 0);
     lv_obj_set_style_bg_color(s_orb2, lv_color_hex(g_sys.lightMode ? 0xE8DEF8 : 0x281D3D), 0);
     lv_obj_set_style_text_color(s_atGlanceDate, lv_color_hex(m3TextPrimaryHex()), 0);
+    if (s_weatherSun) {
+        lv_obj_set_style_bg_color(s_weatherSun, lv_color_hex(g_sys.lightMode ? 0xF59E0B : M3Color::AMBER), 0);
+    }
+    if (s_weatherCloud) {
+        lv_obj_set_style_bg_color(s_weatherCloud, lv_color_hex(g_sys.lightMode ? 0x94A3B8 : M3Color::TEXT_PRIMARY), 0);
+    }
     lv_obj_set_style_text_color(s_atGlanceWeather, lv_color_hex(m3PrimaryHex()), 0);
 
     lv_obj_set_style_bg_color(s_searchBar, lv_color_hex(m3SurfaceHighHex()), 0);
