@@ -50,8 +50,8 @@ static bool  s_outJsonReady = false;
 // Inbound command queue (worker -> main LVGL thread)
 enum class PendingOpKind : uint8_t {
     NONE = 0,
-    INPUT,
-    CMD
+    TOUCH_IN,
+    REMOTE_CMD
 };
 
 struct PendingOp {
@@ -455,7 +455,7 @@ static void pushOp(const PendingOp& op) {
 void screenMirrorEnqueueInput(const char* action, int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t durMs) {
     PendingOp op;
     memset(&op, 0, sizeof(op));
-    op.kind = PendingOpKind::INPUT;
+    op.kind = PendingOpKind::TOUCH_IN;
     copyStr(op.name, sizeof(op.name), action ? action : "");
     op.x1 = x1; op.y1 = y1;
     op.x2 = x2; op.y2 = y2;
@@ -466,7 +466,7 @@ void screenMirrorEnqueueInput(const char* action, int16_t x1, int16_t y1, int16_
 void screenMirrorEnqueueCmd(const char* cmd, const char* argStr, int32_t argInt) {
     PendingOp op;
     memset(&op, 0, sizeof(op));
-    op.kind = PendingOpKind::CMD;
+    op.kind = PendingOpKind::REMOTE_CMD;
     copyStr(op.name, sizeof(op.name), cmd ? cmd : "");
     copyStr(op.argStr, sizeof(op.argStr), argStr ? argStr : "");
     op.argInt = argInt;
@@ -482,7 +482,7 @@ void screenMirrorRequestUiTree() {
 // ============================================================================
 
 static void executePendingOp(const PendingOp& op) {
-    if (op.kind == PendingOpKind::INPUT) {
+    if (op.kind == PendingOpKind::TOUCH_IN) {
         if (!s_remoteEnabled) return;
         s_remoteInputs++;
         if (strcmp(op.name, "tap") == 0) {
@@ -500,7 +500,7 @@ static void executePendingOp(const PendingOp& op) {
         return;
     }
 
-    if (op.kind == PendingOpKind::CMD) {
+    if (op.kind == PendingOpKind::REMOTE_CMD) {
         if (strcmp(op.name, "stream_on") == 0) {
             screenMirrorSetStreaming(true);
             return;
