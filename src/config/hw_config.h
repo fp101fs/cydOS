@@ -32,6 +32,20 @@
 #define TOUCH_SAMPLE_MAX_DELTA 120
 #endif
 
+// microSD card slot (VSPI on ESP32 CYD)
+#ifndef PIN_SD_SCK
+#define PIN_SD_SCK  18
+#endif
+#ifndef PIN_SD_MISO
+#define PIN_SD_MISO 19
+#endif
+#ifndef PIN_SD_MOSI
+#define PIN_SD_MOSI 23
+#endif
+#ifndef PIN_SD_CS
+#define PIN_SD_CS   5
+#endif
+
 // Default portrait dimensions (verified at runtime via tft.width()/height())
 #define DEFAULT_SCREEN_W 240
 #define DEFAULT_SCREEN_H 320

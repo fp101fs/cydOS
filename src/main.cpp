@@ -6,6 +6,7 @@
 #include "drivers/touch_drv.h"
 #include "drivers/wifi_mgr.h"
 #include "drivers/time_mgr.h"
+#include "drivers/notes_store.h"
 #include "theme/m3_theme.h"
 #include "components/m3_keyboard.h"
 #include "ui/home_screen.h"
@@ -36,6 +37,7 @@ void setup() {
     m3ThemeInit();
     wifiMgrInit();
     timeMgrInit();
+    notesStoreInit();
     homeScreenInit();
     appManagerInit();
     statusBarInit();
