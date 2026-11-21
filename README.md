@@ -16,11 +16,12 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
   - **HTTP/HTTPS Text Browser (`app_browser.cpp`, `http_reader`)**: Async FreeRTOS worker fetching real web pages over Wi-Fi (`HTTPClient` / `WiFiClientSecure`) with redirect following, streaming HTML-to-text extraction, and working bookmarks.
   - **Persistent Notes (`app_notes.cpp`, `notes_store`)**: Up to 8 notes persisted in ESP32 NVS (`Preferences`) across reboots, plus optional hot-plug microSD export/import (`/pixel_notes.txt` on VSPI).
   - **Bluetooth BLE Scanner (`app_bluetooth.cpp`, `ble_mgr`)**: Scanner-only `NimBLE-Arduino` integration displaying nearby BLE device names, uppercase MAC addresses, and RSSI with lazy init for heap efficiency.
-  - **WhatsApp Companion (`app_whatsapp.cpp`, `companion_mgr`)**: Local-Wi-Fi RFC 6455 WebSocket bridge to the Android companion app (`../android-companion`) for live WhatsApp notification previews, unread badge, quick replies via Android `RemoteInput`, notification dismissal, and a built-in `?` multi-step setup guide modal.
+  - **WhatsApp Companion (`app_whatsapp.cpp`, `companion_mgr`)**: Local-Wi-Fi RFC 6455 WebSocket bridge to the Android companion app (`android-companion/`) for live WhatsApp notification previews, unread badge, quick replies via Android `RemoteInput`, notification dismissal, Ping/Pong keepalive, and a built-in `?` multi-step setup guide modal.
+  - **Android Link (`app_android_link.cpp`)**: One-tap QR setup app using LVGL `lv_qrcode` — Step 1 shows a direct APK download QR (`releases/latest/download/pixel-cyd-companion.apk`) with an install-help `?` modal; Step 2 starts a temporary local pairing endpoint (`:8766`) and displays a Pairing QR scanned directly inside the Android Companion app for zero-typing setup.
 - **Visual-Limits Benchmark Apps**:
   - **SqLine Lab (`app_sqline_limits.cpp`)**: SquareLine Studio visual-limits showcase (gradients, dual radial arcs, glassmorphic alpha slider, animated line chart, font scaling, 12-widget Stress Arena, live FPS & free-heap HUD).
   - **EEZ Studio (`app_eez_limits.cpp`)**: EEZ Studio HMI visual-limits showcase (instrument gauge + live channel bars, Bars/Line chart toggle, alpha/shadow depth deck, `A-`/`A+` font ladder, 16-widget Stress Matrix, live FPS & free-heap HUD).
-- **17 Registered Apps (3 dynamic 4×2 pages)**: Files, Gallery, Terminal, Wi-Fi, Bluetooth, WhatsApp, Calc, About, Browser, Music, Notes, Settings, Theme, Clock, SqLine Lab, EEZ Studio, and Sys Info.
+- **18 Registered Apps (3 dynamic 4×2 pages)**: Files, Gallery, Terminal, Wi-Fi, Bluetooth, WhatsApp, Android Link, Calc, About, Browser, Music, Notes, Settings, Theme, Clock, SqLine Lab, EEZ Studio, and Sys Info.
 
 ## Hardware
 - **Boards**:
@@ -32,8 +33,8 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
 ## Memory & Flash Footprint (`huge_app.csv`, 3 MB app partition)
 | Target | RAM (Static) | Flash Used | Flash Free |
 | --- | --- | --- | --- |
-| `cyd2usb` (ST7789) | ~31.0% (~101.7 KB / 320 KB) | ~52.1% (~1.64 MB / 3.15 MB) | ~47.9% (~1.51 MB) |
-| `cyd` (ILI9341) | ~31.0% (~101.7 KB / 320 KB) | ~52.1% (~1.64 MB / 3.15 MB) | ~47.9% (~1.51 MB) |
+| `cyd2usb` (ST7789) | ~31.0% (~101.7 KB / 320 KB) | ~52.7% (~1.66 MB / 3.15 MB) | ~47.3% (~1.49 MB) |
+| `cyd` (ILI9341) | ~31.0% (~101.7 KB / 320 KB) | ~52.7% (~1.66 MB / 3.15 MB) | ~47.3% (~1.49 MB) |
 
 ## Build & Flash
 ```bash

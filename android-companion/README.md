@@ -40,18 +40,17 @@ pio run -e cyd -t upload
 
 ---
 
-## 3. Android Permissions & Pairing
+## 3. Android Permissions & One-Tap QR Pairing
 
-1. Open **Pixel CYD Companion** on your Android phone.
-2. Allow **Post Notifications** (Android 13+) so the persistent status bar indicator can show when forwarding is active.
-3. Tap **Grant Notification Access** and enable **Pixel CYD WhatsApp Bridge** in Android's Notification Access settings.
+1. Open **Android Link** on the CYD and scan the Step 1 QR code with your phone to download & install `pixel-cyd-companion.apk` (if Play Protect prompts, tap **More details → Install anyway**).
+2. Open **Pixel CYD Companion** on your Android phone and allow **Post Notifications** (Android 13+).
+3. Tap **Grant Notification Access** and follow the built-in 2-step guide:
+   - Tap **Open Notification Settings** → **Pixel CYD WhatsApp Bridge** → tap the **Allow notification access** switch (even if grayed out, to trigger Android's Restricted Setting check).
+   - If blocked by Android 13+ *Restricted setting*, tap **Next (If Blocked)** → **Open App Info** → **⋮ → Allow restricted settings** (or bottom of App Info on Android 15), then return and turn on **Pixel CYD WhatsApp Bridge**.
 4. Ensure both your Android phone and the ESP32 CYD are connected to the **same 2.4 GHz Wi-Fi network**.
-5. Note the **Phone IP**, **Port** (`8765`), and **6-digit Pairing Token** shown in the Android app.
-6. On the CYD:
-   - Open **WhatsApp** from the Home Screen.
-   - Tap the green **Settings (gear)** button.
-   - Enter the **Phone IP**, **Port** (`8765`), and **Pairing Token**.
-   - Tap **Connect**. The status dot turns green (`Connected`) and recent messages sync automatically.
+5. On the CYD, tap **App Installed →** to display the Pairing QR, then tap **Scan CYD QR Code** inside **Pixel CYD Companion** on your phone.
+   - *(You can also enter Phone IP, Port `8765`, and the 6-digit Pairing Token manually in CYD **WhatsApp → gear icon**.)*
+6. Tap **Send Test Msg** in the Android Companion app (or receive a real WhatsApp notification while WhatsApp is backgrounded) to verify instant delivery to the CYD!
 
 ---
 
