@@ -22,6 +22,9 @@ void setup() {
 
     lv_init();
     displayInit();
+    hwRgbLed(0, 255, 0);
+    delay(120);
+    hwRgbLed(0, 0, 0);
     touchInit();
 
     if (hwBootPressed()) {

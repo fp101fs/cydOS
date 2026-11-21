@@ -1,6 +1,7 @@
 #include "touch_drv.h"
 #include "display_drv.h"
 #include "../config/hw_config.h"
+#include "../theme/m3_theme.h"
 #include <Preferences.h>
 
 // ST7789 dual-USB CYD has XPT2046 X-axis mirrored relative to rotation(0)
@@ -91,12 +92,14 @@ static void lvglTouchReadCb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
         data->state = LV_INDEV_STATE_PR;
         if (!wasPressed) {
             wasPressed = true;
+            if (!g_sys.flashlightOn) hwRgbLed(0, 255, 255);
             Serial.printf("[TOUCH] PR x=%d y=%d\n", lastX, lastY);
         }
     } else {
         data->state = LV_INDEV_STATE_REL;
         if (wasPressed) {
             wasPressed = false;
+            if (!g_sys.flashlightOn) hwRgbLed(0, 0, 0);
             Serial.println("[TOUCH] REL");
         }
     }
