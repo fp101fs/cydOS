@@ -4,6 +4,7 @@
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
 #include "../drivers/wifi_mgr.h"
+#include "../drivers/ble_mgr.h"
 #include "../drivers/time_mgr.h"
 #include "../components/m3_widgets.h"
 #include <stdio.h>
@@ -102,8 +103,7 @@ static void wifiTileCb(lv_event_t* e) {
 static void btTileCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
-    g_sys.btEnabled = !g_sys.btEnabled;
-    if (g_sys.btEnabled && g_sys.airplaneMode) g_sys.airplaneMode = false;
+    bleMgrSetEnabled(!g_sys.btEnabled);
     quickSettingsRefresh();
     statusBarRefresh();
 }
@@ -111,7 +111,9 @@ static void btTileCb(lv_event_t* e) {
 static void airTileCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
-    wifiMgrSetAirplaneMode(!g_sys.airplaneMode);
+    bool nextAir = !g_sys.airplaneMode;
+    wifiMgrSetAirplaneMode(nextAir);
+    bleMgrSetAirplaneMode(nextAir);
     quickSettingsRefresh();
     statusBarRefresh();
 }
@@ -280,7 +282,7 @@ void quickSettingsRefresh() {
 
     bool btActive = g_sys.btEnabled && !g_sys.airplaneMode;
     styleTile(s_tileBt, btActive, M3Color::SECONDARY_CONT);
-    lv_label_set_text(s_tileBtSub, btActive ? g_sys.btDevice : "Off");
+    lv_label_set_text(s_tileBtSub, bleMgrStatusText());
 
     styleTile(s_tileAir, g_sys.airplaneMode, M3Color::CYAN_CONT);
     lv_label_set_text(s_tileAirSub, g_sys.airplaneMode ? "Active" : "Off");

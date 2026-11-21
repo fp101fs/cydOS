@@ -70,7 +70,8 @@
 #define LV_ATTRIBUTE_MEM_ALIGN
 #define LV_ATTRIBUTE_LARGE_CONST
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY
-#define LV_ATTRIBUTE_FAST_MEM IRAM_ATTR
+/* Keep LVGL draw routines in flash (I-cache) so Wi-Fi + NimBLE fit comfortably in IRAM */
+#define LV_ATTRIBUTE_FAST_MEM
 #define LV_EXPORT_CONST_INT(int_value) struct _silence_gcc_warning
 #define LV_USE_LARGE_COORD 0
 

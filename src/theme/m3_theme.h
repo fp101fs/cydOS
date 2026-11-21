@@ -54,7 +54,9 @@ struct SystemState {
     int8_t wifiBars     = 0;
 
     bool btEnabled      = true;
-    char btDevice[32]   = "Pixel Buds Pro";
+    bool btScanning     = false;
+    uint8_t btFoundCount = 0;
+    char btDevice[32]   = "";
 
     bool airplaneMode   = false;
     bool flashlightOn   = false;

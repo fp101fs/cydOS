@@ -5,6 +5,7 @@
 #include "drivers/display_drv.h"
 #include "drivers/touch_drv.h"
 #include "drivers/wifi_mgr.h"
+#include "drivers/ble_mgr.h"
 #include "drivers/time_mgr.h"
 #include "drivers/notes_store.h"
 #include "theme/m3_theme.h"
@@ -36,6 +37,7 @@ void setup() {
 
     m3ThemeInit();
     wifiMgrInit();
+    bleMgrInit();
     timeMgrInit();
     notesStoreInit();
     homeScreenInit();
@@ -54,6 +56,11 @@ void loop() {
     m3SyncSysTick();
 
     if (wifiMgrTick()) {
+        statusBarRefresh();
+        if (quickSettingsIsOpen()) quickSettingsRefresh();
+    }
+
+    if (bleMgrTick()) {
         statusBarRefresh();
         if (quickSettingsIsOpen()) quickSettingsRefresh();
     }
