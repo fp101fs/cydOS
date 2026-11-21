@@ -3,8 +3,13 @@
 #include "../config/hw_config.h"
 #include <Preferences.h>
 
-static int16_t s_calX0 = 200, s_calX1 = 3900;
-static int16_t s_calY0 = 200, s_calY1 = 3700;
+// ST7789 dual-USB CYD has XPT2046 X-axis mirrored relative to rotation(0)
+#ifdef ST7789_2_DRIVER
+static int16_t s_calX0 = 3850, s_calX1 = 220;
+#else
+static int16_t s_calX0 = 220, s_calX1 = 3850;
+#endif
+static int16_t s_calY0 = 220, s_calY1 = 3750;
 static bool s_calLoaded = false;
 static lv_indev_drv_t s_indev_drv;
 
@@ -40,7 +45,7 @@ static uint16_t xptTransfer(uint8_t cmd) {
 
 static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
     z = xptTransfer(0xB0);
-    if (z < TOUCH_Z_MIN) return false;
+    if (z < TOUCH_Z_MIN || z > 4090) return false;
     x = xptTransfer(0xD0);
     y = xptTransfer(0x90);
     return true;
@@ -99,8 +104,8 @@ void touchInit() {
     pinMode(PIN_TOUCH_IRQ, INPUT);
 
     Preferences prefs;
-    if (prefs.begin("touch", true)) {
-        if (prefs.getBool("okp", false)) {
+    if (prefs.begin("touch_p8", true)) {
+        if (prefs.getBool("ok", false)) {
             s_calX0 = prefs.getShort("x0", s_calX0);
             s_calX1 = prefs.getShort("x1", s_calX1);
             s_calY0 = prefs.getShort("y0", s_calY0);
@@ -170,7 +175,6 @@ void touchCalibrateInteractive() {
     waitTap(r1x, r1y);
     tft.fillCircle(w - 21, h - 21, 18, TFT_GREEN);
 
-    // Extrapolate 20px inset back to 0..w-1 and 0..h-1
     int32_t dx = (int32_t)r1x - (int32_t)r0x;
     int32_t dy = (int32_t)r1y - (int32_t)r0y;
     s_calX0 = (int16_t)(r0x - (dx * 20) / (w - 41));
@@ -181,8 +185,8 @@ void touchCalibrateInteractive() {
     if (s_calY0 == s_calY1) s_calY1 = s_calY0 + 1;
 
     Preferences prefs;
-    if (prefs.begin("touch", false)) {
-        prefs.putBool("okp", true);
+    if (prefs.begin("touch_p8", false)) {
+        prefs.putBool("ok", true);
         prefs.putShort("x0", s_calX0);
         prefs.putShort("x1", s_calX1);
         prefs.putShort("y0", s_calY0);

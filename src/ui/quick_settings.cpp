@@ -39,8 +39,8 @@ static void styleTile(lv_obj_t* tile, bool active, uint32_t activeBg) {
         lv_obj_set_style_bg_color(tile, lv_color_hex(activeBg), 0);
         lv_obj_set_style_border_color(tile, lv_color_hex(activeBg), 0);
     } else {
-        lv_obj_set_style_bg_color(tile, lv_color_hex(M3Color::SURFACE_HIGH), 0);
-        lv_obj_set_style_border_color(tile, lv_color_hex(M3Color::OUTLINE), 0);
+        lv_obj_set_style_bg_color(tile, lv_color_hex(m3SurfaceHighHex()), 0);
+        lv_obj_set_style_border_color(tile, lv_color_hex(m3OutlineHex()), 0);
     }
 }
 
@@ -164,7 +164,6 @@ void quickSettingsInit() {
     s_shade = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_shade, w, h);
     lv_obj_set_pos(s_shade, 0, -(int16_t)h);
-    lv_obj_set_style_bg_color(s_shade, lv_color_hex(0x11131B), 0);
     lv_obj_set_style_bg_opa(s_shade, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_shade, 0, 0);
     lv_obj_set_style_radius(s_shade, 0, 0);
@@ -173,9 +172,7 @@ void quickSettingsInit() {
     lv_obj_add_flag(s_shade, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(s_shade, shadeDragCb, LV_EVENT_ALL, nullptr);
 
-    // Header row
     s_qsTime = lv_label_create(s_shade);
-    lv_obj_set_style_text_color(s_qsTime, lv_color_hex(M3Color::TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(s_qsTime, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(s_qsTime, 14, 14);
 
@@ -190,7 +187,6 @@ void quickSettingsInit() {
     lv_obj_set_style_text_font(s_qsBatt, &lv_font_montserrat_12, 0);
     lv_obj_align(s_qsBatt, LV_ALIGN_TOP_RIGHT, -50, 18);
 
-    // Settings gear button
     lv_obj_t* gearBtn = lv_btn_create(s_shade);
     lv_obj_set_size(gearBtn, 34, 34);
     lv_obj_align(gearBtn, LV_ALIGN_TOP_RIGHT, -10, 12);
@@ -203,13 +199,11 @@ void quickSettingsInit() {
     lv_obj_set_style_text_color(gearIco, lv_color_hex(M3Color::TEXT_PRIMARY), 0);
     lv_obj_center(gearIco);
 
-    // 2x2 Quick Settings Tiles
     s_tileWifi = createQsTile(s_shade, 10, 68, LV_SYMBOL_WIFI, "Wi-Fi", g_sys.wifiSsid, &s_tileWifiSub, wifiTileCb);
     s_tileBt = createQsTile(s_shade, 124, 68, LV_SYMBOL_BLUETOOTH, "Bluetooth", g_sys.btDevice, &s_tileBtSub, btTileCb);
     s_tileAir = createQsTile(s_shade, 10, 132, LV_SYMBOL_GPS, "Airplane", "Off", &s_tileAirSub, airTileCb);
     s_tileTorch = createQsTile(s_shade, 124, 132, LV_SYMBOL_EYE_OPEN, "Torch", "Off", &s_tileTorchSub, torchTileCb);
 
-    // Brightness Slider Card
     lv_obj_t* brCard = m3Card(s_shade, 220, 64, 18);
     lv_obj_set_pos(brCard, 10, 200);
     lv_obj_set_style_pad_hor(brCard, 12, 0);
@@ -236,7 +230,6 @@ void quickSettingsInit() {
     lv_obj_set_style_pad_all(s_brightSlider, 2, LV_PART_KNOB);
     lv_obj_add_event_cb(s_brightSlider, brightSliderCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Close handle button at bottom
     lv_obj_t* closeBtn = lv_btn_create(s_shade);
     lv_obj_set_size(closeBtn, 96, 26);
     lv_obj_align(closeBtn, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -250,6 +243,14 @@ void quickSettingsInit() {
     lv_obj_set_style_text_font(upIco, &lv_font_montserrat_10, 0);
     lv_obj_center(upIco);
 
+    quickSettingsRefreshTheme();
+    quickSettingsRefresh();
+}
+
+void quickSettingsRefreshTheme() {
+    if (!s_shade) return;
+    lv_obj_set_style_bg_color(s_shade, lv_color_hex(g_sys.lightMode ? 0xEAEFF7 : 0x11131B), 0);
+    lv_obj_set_style_text_color(s_qsTime, lv_color_hex(m3TextPrimaryHex()), 0);
     quickSettingsRefresh();
 }
 

@@ -5,6 +5,7 @@
 
 enum AppId : uint8_t {
     APP_SETTINGS = 0,
+    APP_THEME,
     APP_MUSIC,
     APP_FILES,
     APP_GALLERY,

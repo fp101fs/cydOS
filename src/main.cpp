@@ -5,8 +5,10 @@
 #include "drivers/display_drv.h"
 #include "drivers/touch_drv.h"
 #include "theme/m3_theme.h"
+#include "components/m3_keyboard.h"
 #include "ui/home_screen.h"
 #include "ui/status_bar.h"
+#include "ui/nav_bar.h"
 #include "ui/quick_settings.h"
 #include "ui/app_manager.h"
 
@@ -31,6 +33,8 @@ void setup() {
     homeScreenInit();
     appManagerInit();
     statusBarInit();
+    navBarInit();
+    m3KeyboardInit();
     quickSettingsInit();
 
     s_lastMinute = g_sys.minute;
@@ -47,10 +51,11 @@ void loop() {
         if (quickSettingsIsOpen()) quickSettingsRefresh();
     }
 
-    // Hardware BOOT button acts as Android Back/Home
     bool bootDown = hwBootPressed();
     if (bootDown && !s_bootWasDown) {
-        if (quickSettingsIsOpen()) {
+        if (m3KeyboardIsOpen()) {
+            m3KeyboardHide();
+        } else if (quickSettingsIsOpen()) {
             quickSettingsClose();
         } else if (appManagerHasActiveApp()) {
             appManagerClose();

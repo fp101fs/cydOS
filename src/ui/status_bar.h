@@ -4,4 +4,5 @@
 
 void statusBarInit();
 void statusBarRefresh();
+void statusBarRefreshTheme();
 void statusBarSetVisible(bool visible);

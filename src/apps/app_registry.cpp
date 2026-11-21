@@ -1,7 +1,6 @@
 #include "app_registry.h"
 #include "../theme/m3_theme.h"
 
-// Forward declarations of individual app builders
 void buildAppSettings(lv_obj_t* body);
 void buildAppMusic(lv_obj_t* body);
 void tickAppMusic();
@@ -21,6 +20,7 @@ void tickAppClock();
 
 static const AppMeta s_apps[APP_COUNT] = {
     { APP_SETTINGS,   "Settings",    LV_SYMBOL_SETTINGS,  0x8AB4F8, 0x1D3557, buildAppSettings,   nullptr },
+    { APP_THEME,      "Theme",       LV_SYMBOL_EYE_OPEN,  0xFDD663, 0x453917, nullptr,            nullptr },
     { APP_MUSIC,      "Music",       LV_SYMBOL_AUDIO,     0xF28B82, 0x4A2226, buildAppMusic,      tickAppMusic },
     { APP_FILES,      "Files",       LV_SYMBOL_DIRECTORY, 0xFDD663, 0x453917, buildAppFiles,      nullptr },
     { APP_GALLERY,    "Gallery",     LV_SYMBOL_IMAGE,     0x81C995, 0x1B4332, buildAppGallery,    nullptr },

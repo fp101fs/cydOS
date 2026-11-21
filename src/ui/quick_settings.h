@@ -7,3 +7,4 @@ void quickSettingsOpen();
 void quickSettingsClose();
 bool quickSettingsIsOpen();
 void quickSettingsRefresh();
+void quickSettingsRefreshTheme();

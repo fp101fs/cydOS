@@ -11,17 +11,17 @@ namespace M3Color {
     constexpr uint32_t SURFACE_HIGHEST = 0x2C313F;
     constexpr uint32_t OUTLINE         = 0x353B4B;
 
-    constexpr uint32_t PRIMARY         = 0x8AB4F8;  // Pixel Blue
+    constexpr uint32_t PRIMARY         = 0x8AB4F8;
     constexpr uint32_t PRIMARY_CONT    = 0x1D3557;
     constexpr uint32_t ON_PRIMARY      = 0x07234B;
 
-    constexpr uint32_t SECONDARY       = 0xC5B4E3;  // Muted Lavender
+    constexpr uint32_t SECONDARY       = 0xC5B4E3;
     constexpr uint32_t SECONDARY_CONT  = 0x3A2F52;
 
-    constexpr uint32_t TERTIARY        = 0x81C995;  // Sage Green
+    constexpr uint32_t TERTIARY        = 0x81C995;
     constexpr uint32_t TERTIARY_CONT   = 0x1B4332;
 
-    constexpr uint32_t CYAN            = 0x78D9EC;  // Muted Cyan
+    constexpr uint32_t CYAN            = 0x78D9EC;
     constexpr uint32_t CYAN_CONT       = 0x173F49;
 
     constexpr uint32_t AMBER           = 0xFDD663;
@@ -34,7 +34,7 @@ namespace M3Color {
 
 namespace M3Dim {
     constexpr int16_t STATUS_BAR_H = 24;
-    constexpr int16_t NAV_BAR_H    = 22;
+    constexpr int16_t NAV_BAR_H    = 54;
     constexpr int16_t APP_TOP_H    = 40;
     constexpr int16_t PAD_SM       = 6;
     constexpr int16_t PAD_MD       = 10;
@@ -47,13 +47,14 @@ namespace M3Dim {
 struct SystemState {
     bool wifiEnabled    = true;
     char wifiSsid[32]   = "Pixel-Home-5G";
-    int8_t wifiBars     = 3;  // 0..3
+    int8_t wifiBars     = 3;
 
     bool btEnabled      = true;
     char btDevice[32]   = "Pixel Buds Pro";
 
     bool airplaneMode   = false;
     bool flashlightOn   = false;
+    bool lightMode      = false;
     bool amoledBg       = false;
     bool ledFeedback    = true;
     bool autoLock       = false;
@@ -68,5 +69,14 @@ extern SystemState g_sys;
 
 void m3ThemeInit();
 uint32_t m3CurrentBgHex();
+uint32_t m3SurfaceHex();
+uint32_t m3SurfaceHighHex();
+uint32_t m3SurfaceHighestHex();
+uint32_t m3OutlineHex();
+uint32_t m3TextPrimaryHex();
+uint32_t m3TextSecondaryHex();
+uint32_t m3PrimaryHex();
+
+void m3ApplyThemeAll();
 void m3PulseFeedback();
 void m3SyncSysTick();
