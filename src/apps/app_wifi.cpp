@@ -466,4 +466,4 @@ void tickAppWifi() {
     }
 }
 
-REGISTER_APP_THEMED(wifi, "wifi", "Wi-Fi", LV_SYMBOL_WIFI, 0x8AB4F8, 0x1A3252, buildAppWifi, tickAppWifi, refreshAppWifiTheme, 40);
+REGISTER_APP_THEMED(wifi, "wifi", "Wi-Fi", LV_SYMBOL_WIFI, 0x8AB4F8, 0x2563EB, buildAppWifi, tickAppWifi, refreshAppWifiTheme, 40);

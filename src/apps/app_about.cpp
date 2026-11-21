@@ -39,4 +39,4 @@ void buildAppAbout(lv_obj_t* body) {
     m3InfoRow(info, "Touch", "XPT2046 Resistive");
 }
 
-REGISTER_APP(about, "about", "About", LV_SYMBOL_HOME, 0x81C995, 0x1D3F2E, buildAppAbout, nullptr, 80);
+REGISTER_APP(about, "about", "About", LV_SYMBOL_HOME, 0x81C995, 0x0D9488, buildAppAbout, nullptr, 80);

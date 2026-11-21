@@ -27,6 +27,8 @@ static lv_obj_t* s_brightSlider = nullptr;
 static lv_obj_t* s_brightLbl = nullptr;
 
 static lv_coord_t s_dragStartY = 0;
+static uint32_t s_qsRebootArmMs = 0;
+static uint32_t s_qsShutdownArmMs = 0;
 
 static void animYCb(void* var, int32_t v) {
     lv_obj_set_y((lv_obj_t*)var, v);
@@ -59,7 +61,7 @@ static lv_obj_t* createQsTile(
 ) {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_pos(btn, x, y);
-    lv_obj_set_size(btn, 106, 56);
+    lv_obj_set_size(btn, 106, 54);
     lv_obj_set_style_radius(btn, 18, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_border_width(btn, 1, 0);
@@ -161,6 +163,38 @@ static void closeBtnCb(lv_event_t* e) {
     quickSettingsClose();
 }
 
+static void qsRebootCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    uint32_t now = millis();
+    if (s_qsRebootArmMs != 0 && (now - s_qsRebootArmMs) < 3000) {
+        s_qsRebootArmMs = 0;
+        m3ShowToast("Rebooting...", 600);
+        lv_timer_handler();
+        hwReboot();
+        return;
+    }
+    s_qsRebootArmMs = now;
+    s_qsShutdownArmMs = 0;
+    m3ShowToast("Tap Reboot again to restart", 2500);
+}
+
+static void qsShutdownCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    uint32_t now = millis();
+    if (s_qsShutdownArmMs != 0 && (now - s_qsShutdownArmMs) < 3000) {
+        s_qsShutdownArmMs = 0;
+        m3ShowToast("Shutting down...", 600);
+        lv_timer_handler();
+        hwShutdown();
+        return;
+    }
+    s_qsShutdownArmMs = now;
+    s_qsRebootArmMs = 0;
+    m3ShowToast("Tap Shutdown again (BOOT to wake)", 2500);
+}
+
 void quickSettingsInit() {
     uint16_t w = displayWidth();
     uint16_t h = displayHeight();
@@ -202,13 +236,13 @@ void quickSettingsInit() {
     lv_obj_set_style_text_color(gearIco, lv_color_hex(M3Color::TEXT_PRIMARY), 0);
     lv_obj_center(gearIco);
 
-    s_tileWifi = createQsTile(s_shade, 10, 68, LV_SYMBOL_WIFI, "Wi-Fi", g_sys.wifiSsid, &s_tileWifiSub, wifiTileCb);
-    s_tileBt = createQsTile(s_shade, 124, 68, LV_SYMBOL_BLUETOOTH, "Bluetooth", g_sys.btDevice, &s_tileBtSub, btTileCb);
-    s_tileAir = createQsTile(s_shade, 10, 132, LV_SYMBOL_GPS, "Airplane", "Off", &s_tileAirSub, airTileCb);
-    s_tileTorch = createQsTile(s_shade, 124, 132, LV_SYMBOL_EYE_OPEN, "Torch", "Off", &s_tileTorchSub, torchTileCb);
+    s_tileWifi = createQsTile(s_shade, 10, 62, LV_SYMBOL_WIFI, "Wi-Fi", g_sys.wifiSsid, &s_tileWifiSub, wifiTileCb);
+    s_tileBt = createQsTile(s_shade, 124, 62, LV_SYMBOL_BLUETOOTH, "Bluetooth", g_sys.btDevice, &s_tileBtSub, btTileCb);
+    s_tileAir = createQsTile(s_shade, 10, 122, LV_SYMBOL_GPS, "Airplane", "Off", &s_tileAirSub, airTileCb);
+    s_tileTorch = createQsTile(s_shade, 124, 122, LV_SYMBOL_EYE_OPEN, "Torch", "Off", &s_tileTorchSub, torchTileCb);
 
-    lv_obj_t* brCard = m3Card(s_shade, 220, 64, 18);
-    lv_obj_set_pos(brCard, 10, 200);
+    lv_obj_t* brCard = m3Card(s_shade, 220, 58, 18);
+    lv_obj_set_pos(brCard, 10, 184);
     lv_obj_set_style_pad_hor(brCard, 12, 0);
 
     lv_obj_t* brTitle = lv_label_create(brCard);
@@ -233,9 +267,18 @@ void quickSettingsInit() {
     lv_obj_set_style_pad_all(s_brightSlider, 2, LV_PART_KNOB);
     lv_obj_add_event_cb(s_brightSlider, brightSliderCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+    // Power Row: Reboot | Shutdown
+    lv_obj_t* rebootBtn = m3PillBtn(s_shade, LV_SYMBOL_REFRESH " Reboot", 0x3D3214, M3Color::AMBER, 106, 34);
+    lv_obj_set_pos(rebootBtn, 10, 248);
+    lv_obj_add_event_cb(rebootBtn, qsRebootCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* shutdownBtn = m3PillBtn(s_shade, LV_SYMBOL_POWER " Shutdown", 0x4A1D1D, M3Color::CORAL, 106, 34);
+    lv_obj_set_pos(shutdownBtn, 124, 248);
+    lv_obj_add_event_cb(shutdownBtn, qsShutdownCb, LV_EVENT_CLICKED, nullptr);
+
     lv_obj_t* closeBtn = lv_btn_create(s_shade);
     lv_obj_set_size(closeBtn, 96, 26);
-    lv_obj_align(closeBtn, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(closeBtn, LV_ALIGN_BOTTOM_MID, 0, -6);
     lv_obj_set_style_bg_color(closeBtn, lv_color_hex(M3Color::SURFACE_HIGH), 0);
     lv_obj_set_style_radius(closeBtn, M3Dim::RADIUS_PILL, 0);
     lv_obj_set_style_shadow_width(closeBtn, 0, 0);
@@ -310,6 +353,8 @@ void quickSettingsOpen() {
 
 void quickSettingsClose() {
     if (!s_shade || !s_isOpen) return;
+    s_qsRebootArmMs = 0;
+    s_qsShutdownArmMs = 0;
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_shade);

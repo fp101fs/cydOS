@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <lvgl.h>
+#include <esp_sleep.h>
 
 #include "config/hw_config.h"
 #include "drivers/display_drv.h"
@@ -8,7 +9,9 @@
 #include "drivers/ble_mgr.h"
 #include "drivers/time_mgr.h"
 #include "drivers/notes_store.h"
+#include "drivers/companion_mgr.h"
 #include "theme/m3_theme.h"
+#include "components/m3_widgets.h"
 #include "components/m3_keyboard.h"
 #include "ui/home_screen.h"
 #include "ui/status_bar.h"
@@ -30,7 +33,7 @@ void setup() {
     hwRgbLed(0, 0, 0);
     touchInit();
 
-    if (hwBootPressed()) {
+    if (hwBootPressed() && esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT0) {
         Serial.println("[TOUCH] BOOT held -> interactive calibration");
         touchCalibrateInteractive();
     }
@@ -40,6 +43,7 @@ void setup() {
     bleMgrInit();
     timeMgrInit();
     notesStoreInit();
+    companionMgrInit();
     homeScreenInit();
     appManagerInit();
     statusBarInit();
@@ -63,6 +67,18 @@ void loop() {
     if (bleMgrTick()) {
         statusBarRefresh();
         if (quickSettingsIsOpen()) quickSettingsRefresh();
+    }
+
+    if (companionMgrTick()) {
+        statusBarRefresh();
+    }
+    char waSender[COMPANION_SENDER_MAX];
+    char waPreview[64];
+    if (companionConsumeNewAlert(waSender, sizeof(waSender), waPreview, sizeof(waPreview))) {
+        char toast[96];
+        snprintf(toast, sizeof(toast), "WA %s: %s", waSender, waPreview);
+        m3ShowToast(toast, 2400);
+        m3PulseFeedback();
     }
 
     uint8_t timeChg = timeMgrTick();

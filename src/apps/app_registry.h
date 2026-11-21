@@ -16,6 +16,7 @@ struct AppMeta {
     int16_t order;
     void (*actionFn)();
     void (*themeFn)();
+    const lv_img_dsc_t* iconImg;
 };
 
 struct AppRegistrar {
@@ -29,7 +30,7 @@ const AppMeta* appFindById(const char* id);
 
 #define REGISTER_APP_EX(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord, action) \
     static const AppMeta s_appMeta_##varId = {                                                        \
-        idStr, nameStr, iconStr, accent, container, build, tick, ord, action, nullptr                 \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, action, nullptr, nullptr        \
     };                                                                                                \
     static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)
 
@@ -38,6 +39,12 @@ const AppMeta* appFindById(const char* id);
 
 #define REGISTER_APP_THEMED(varId, idStr, nameStr, iconStr, accent, container, build, tick, theme, ord) \
     static const AppMeta s_appMeta_##varId = {                                                           \
-        idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr, theme                     \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr, theme, nullptr            \
     };                                                                                                   \
+    static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)
+
+#define REGISTER_APP_THEMED_IMG(varId, idStr, nameStr, iconStr, iconImgPtr, accent, container, build, tick, theme, ord) \
+    static const AppMeta s_appMeta_##varId = {                                                                           \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr, theme, iconImgPtr                         \
+    };                                                                                                                   \
     static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)

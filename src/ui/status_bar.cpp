@@ -3,10 +3,12 @@
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
 #include "../drivers/time_mgr.h"
+#include "../drivers/companion_mgr.h"
 #include <stdio.h>
 
 static lv_obj_t* s_bar = nullptr;
 static lv_obj_t* s_timeLbl = nullptr;
+static lv_obj_t* s_waLbl = nullptr;
 static lv_obj_t* s_btLbl = nullptr;
 static lv_obj_t* s_wifiLbl = nullptr;
 static lv_obj_t* s_airLbl = nullptr;
@@ -51,6 +53,13 @@ void statusBarInit() {
     s_timeLbl = lv_label_create(s_bar);
     lv_obj_set_style_text_font(s_timeLbl, &lv_font_montserrat_12, 0);
     lv_obj_align(s_timeLbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    s_waLbl = lv_label_create(s_bar);
+    lv_label_set_text(s_waLbl, "");
+    lv_obj_set_style_text_font(s_waLbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(s_waLbl, lv_color_hex(0x25D366), 0);
+    lv_obj_align(s_waLbl, LV_ALIGN_LEFT_MID, 44, 0);
+    lv_obj_add_flag(s_waLbl, LV_OBJ_FLAG_HIDDEN);
 
     s_battLbl = lv_label_create(s_bar);
     lv_obj_set_style_text_font(s_battLbl, &lv_font_montserrat_10, 0);
@@ -133,6 +142,20 @@ void statusBarRefresh() {
     char buf[16];
     timeMgrFormatHHMM(buf, sizeof(buf));
     lv_label_set_text(s_timeLbl, buf);
+
+    if (s_waLbl) {
+        uint8_t waUnread = companionUnreadCount();
+        if (waUnread > 0) {
+            snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE "%u", (unsigned)waUnread);
+            lv_label_set_text(s_waLbl, buf);
+            lv_obj_clear_flag(s_waLbl, LV_OBJ_FLAG_HIDDEN);
+        } else if (companionIsConnected()) {
+            lv_label_set_text(s_waLbl, LV_SYMBOL_ENVELOPE);
+            lv_obj_clear_flag(s_waLbl, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_waLbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     snprintf(buf, sizeof(buf), "%u%%", g_sys.batteryPct);
     lv_label_set_text(s_battLbl, buf);

@@ -341,4 +341,4 @@ void buildAppBrowser(lv_obj_t* body) {
     refreshAppBrowserTheme();
 }
 
-REGISTER_APP_THEMED(browser, "browser", "Browser", LV_SYMBOL_GPS, 0x78D9EC, 0x173F49, buildAppBrowser, tickAppBrowser, refreshAppBrowserTheme, 90);
+REGISTER_APP_THEMED(browser, "browser", "Browser", LV_SYMBOL_GPS, 0x78D9EC, 0x0284C7, buildAppBrowser, tickAppBrowser, refreshAppBrowserTheme, 90);

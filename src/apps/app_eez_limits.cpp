@@ -707,7 +707,7 @@ REGISTER_APP_THEMED(
     "EEZ Studio",
     LV_SYMBOL_LOOP,
     0x38BDF8,
-    0x12354D,
+    0x0891B2,
     buildAppEezLimits,
     tickAppEezLimits,
     refreshAppEezTheme,

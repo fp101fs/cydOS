@@ -99,4 +99,4 @@ void buildAppFiles(lv_obj_t* body) {
     renderFiles();
 }
 
-REGISTER_APP(files, "files", "Files", LV_SYMBOL_DIRECTORY, 0xFDD663, 0x453917, buildAppFiles, nullptr, 10);
+REGISTER_APP(files, "files", "Files", LV_SYMBOL_DIRECTORY, 0xFDD663, 0xE5A00D, buildAppFiles, nullptr, 10);

@@ -153,4 +153,4 @@ void tickAppMusic() {
     }
 }
 
-REGISTER_APP(music, "music", "Music", LV_SYMBOL_AUDIO, 0xF28B82, 0x4A2226, buildAppMusic, tickAppMusic, 100);
+REGISTER_APP(music, "music", "Music", LV_SYMBOL_AUDIO, 0xF28B82, 0xE11D48, buildAppMusic, tickAppMusic, 100);

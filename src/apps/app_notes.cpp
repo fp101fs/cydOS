@@ -408,5 +408,5 @@ void buildAppNotes(lv_obj_t* body) {
     renderListView();
 }
 
-REGISTER_APP_THEMED(notes, "notes", "Notes", LV_SYMBOL_EDIT, 0xFDD663, 0x423819,
+REGISTER_APP_THEMED(notes, "notes", "Notes", LV_SYMBOL_EDIT, 0xFDD663, 0xEA8C00,
                     buildAppNotes, nullptr, refreshAppNotesTheme, 110);

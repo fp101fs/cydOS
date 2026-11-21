@@ -225,5 +225,5 @@ void tickAppClock() {
     }
 }
 
-REGISTER_APP_THEMED(clock, "clock", "Clock", LV_SYMBOL_BELL, 0x8AB4F8, 0x1D3557,
+REGISTER_APP_THEMED(clock, "clock", "Clock", LV_SYMBOL_BELL, 0x8AB4F8, 0x3B82F6,
                     buildAppClock, tickAppClock, refreshAppClockTheme, 140);

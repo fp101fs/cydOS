@@ -5,6 +5,7 @@
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
 #include "../components/m3_keyboard.h"
+#include "../components/m3_modal.h"
 #include "../components/m3_widgets.h"
 
 static constexpr int16_t MENU_POPUP_W       = 184;
@@ -33,6 +34,10 @@ void navBarCloseMenu() {
 static void backBtnCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
+    if (m3ModalIsOpen()) {
+        m3ModalClose();
+        return;
+    }
     if (s_menuPopup && !lv_obj_has_flag(s_menuPopup, LV_OBJ_FLAG_HIDDEN)) {
         closeMenu();
         return;
@@ -55,6 +60,7 @@ static void backBtnCb(lv_event_t* e) {
 static void homeBtnCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
+    if (m3ModalIsOpen()) m3ModalClose();
     closeMenu();
     if (m3KeyboardIsOpen()) m3KeyboardHide();
     if (quickSettingsIsOpen()) quickSettingsClose();

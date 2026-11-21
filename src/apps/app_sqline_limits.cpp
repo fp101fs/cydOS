@@ -661,7 +661,7 @@ REGISTER_APP_THEMED(
     "SqLine Lab",
     LV_SYMBOL_EYE_OPEN,
     0xFF6B9D,
-    0x4A1936,
+    0xDB2777,
     buildAppSqLineLimits,
     tickAppSqLineLimits,
     refreshAppSqLineTheme,

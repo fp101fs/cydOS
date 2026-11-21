@@ -1,5 +1,7 @@
 #include "display_drv.h"
 #include "../config/hw_config.h"
+#include <WiFi.h>
+#include <esp_sleep.h>
 
 TFT_eSPI tft;
 
@@ -81,4 +83,49 @@ void hwRgbLed(uint8_t r, uint8_t g, uint8_t b) {
 
 bool hwBootPressed() {
     return digitalRead(PIN_BOOT) == LOW;
+}
+
+void hwReboot() {
+    Serial.println("[PWR] Rebooting...");
+    Serial.flush();
+    hwRgbLed(0, 0, 0);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(80);
+    ESP.restart();
+}
+
+void hwShutdown() {
+    Serial.println("[PWR] Entering deep sleep (press BOOT or RST to wake)");
+    Serial.flush();
+    hwRgbLed(0, 0, 0);
+
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+
+    // Turn off backlight completely
+    ledcWrite(BL_PWM_CHANNEL, 0);
+    ledcDetachPin(CYD_BL_PIN);
+    pinMode(CYD_BL_PIN, OUTPUT);
+    digitalWrite(CYD_BL_PIN, LOW);
+    if (CYD_BL_PIN_ALT != CYD_BL_PIN) {
+        ledcDetachPin(CYD_BL_PIN_ALT);
+        pinMode(CYD_BL_PIN_ALT, OUTPUT);
+        digitalWrite(CYD_BL_PIN_ALT, LOW);
+    }
+
+    // Put TFT controller into sleep mode
+    tft.writecommand(0x28); // Display OFF
+    delay(10);
+    tft.writecommand(0x10); // Sleep IN
+    delay(120);
+
+    // Wait for BOOT release if currently held so ext0 doesn't immediately re-trigger
+    while (hwBootPressed()) {
+        delay(20);
+    }
+    delay(40);
+
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BOOT, 0);
+    esp_deep_sleep_start();
 }

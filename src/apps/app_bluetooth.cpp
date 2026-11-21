@@ -307,4 +307,4 @@ void tickAppBluetooth() {
     }
 }
 
-REGISTER_APP_THEMED(bluetooth, "bluetooth", "Bluetooth", LV_SYMBOL_BLUETOOTH, 0xC5B4E3, 0x362B4E, buildAppBluetooth, tickAppBluetooth, refreshAppBluetoothTheme, 50);
+REGISTER_APP_THEMED(bluetooth, "bluetooth", "Bluetooth", LV_SYMBOL_BLUETOOTH, 0xC5B4E3, 0x5B4FE9, buildAppBluetooth, tickAppBluetooth, refreshAppBluetoothTheme, 50);

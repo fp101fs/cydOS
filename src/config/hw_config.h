@@ -26,10 +26,22 @@
 #define PIN_TOUCH_IRQ  36
 
 #ifndef TOUCH_Z_MIN
-#define TOUCH_Z_MIN 80
+#define TOUCH_Z_MIN 33
+#endif
+#ifndef TOUCH_Z_MIN_FLOOR
+#define TOUCH_Z_MIN_FLOOR 1
+#endif
+#ifndef TOUCH_Z_MIN_CEIL
+#define TOUCH_Z_MIN_CEIL 160
+#endif
+#ifndef TOUCH_SENS_DEFAULT
+#define TOUCH_SENS_DEFAULT 80
 #endif
 #ifndef TOUCH_SAMPLE_MAX_DELTA
 #define TOUCH_SAMPLE_MAX_DELTA 120
+#endif
+#ifndef TOUCH_SAMPLE_MAX_DELTA_MAX
+#define TOUCH_SAMPLE_MAX_DELTA_MAX 360
 #endif
 
 // microSD card slot (VSPI on ESP32 CYD)

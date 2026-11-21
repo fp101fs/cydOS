@@ -80,4 +80,4 @@ void tickAppSysInfo() {
     }
 }
 
-REGISTER_APP(sysinfo, "sysinfo", "Sys Info", LV_SYMBOL_CHARGE, 0x78D9EC, 0x153944, buildAppSysInfo, tickAppSysInfo, 60);
+REGISTER_APP(sysinfo, "sysinfo", "Sys Info", LV_SYMBOL_CHARGE, 0x78D9EC, 0x0E7490, buildAppSysInfo, tickAppSysInfo, 170);

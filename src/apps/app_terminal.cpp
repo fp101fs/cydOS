@@ -69,4 +69,4 @@ void buildAppTerminal(lv_obj_t* body) {
     }
 }
 
-REGISTER_APP(terminal, "terminal", "Terminal", LV_SYMBOL_KEYBOARD, 0xA8DAB5, 0x1C3B28, buildAppTerminal, nullptr, 30);
+REGISTER_APP(terminal, "terminal", "Terminal", LV_SYMBOL_KEYBOARD, 0xA8DAB5, 0x2D3748, buildAppTerminal, nullptr, 30);

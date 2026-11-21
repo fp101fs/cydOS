@@ -8,4 +8,4 @@ static void toggleThemeAction() {
     m3ShowToast(g_sys.lightMode ? "Light Mode" : "Dark Mode", 1100);
 }
 
-REGISTER_APP_EX(theme, "theme", "Theme", LV_SYMBOL_EYE_OPEN, 0xFDD663, 0x453917, nullptr, nullptr, 130, toggleThemeAction);
+REGISTER_APP_EX(theme, "theme", "Theme", LV_SYMBOL_EYE_OPEN, 0xFDD663, 0xD97706, nullptr, nullptr, 130, toggleThemeAction);

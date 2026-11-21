@@ -17,3 +17,7 @@ uint8_t displayGetBrightness();
 // Active-LOW onboard RGB LED (0..255)
 void hwRgbLed(uint8_t r, uint8_t g, uint8_t b);
 bool hwBootPressed();
+
+// Power management
+void hwReboot();
+void hwShutdown(); // Deep sleep; wake with BOOT (GPIO 0) or RST

@@ -4,6 +4,7 @@
 #include "../drivers/display_drv.h"
 #include "../components/m3_widgets.h"
 #include "../components/m3_keyboard.h"
+#include "../components/m3_modal.h"
 
 static lv_obj_t* s_appWin = nullptr;
 static lv_obj_t* s_appHeader = nullptr;
@@ -101,6 +102,7 @@ void appManagerLaunchById(const char* id) {
 
 void appManagerClose() {
     if (!s_appWin || s_closing) return;
+    if (m3ModalIsOpen()) m3ModalClose();
     if (m3KeyboardIsOpen()) m3KeyboardHide();
     s_closing = true;
     s_activeMeta = nullptr;

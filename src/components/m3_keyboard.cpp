@@ -12,7 +12,9 @@ static lv_obj_t* s_targetTa = nullptr;
 static M3KbdEnterCb s_onEnter = nullptr;
 
 static lv_obj_t* s_pressedBtn = nullptr;
-static bool s_pressValid = false;
+static lv_obj_t* s_activeBtn = nullptr;
+static int s_activeRow = -1;
+static int s_activeCol = -1;
 
 static constexpr int16_t PREVIEW_W          = 36;
 static constexpr int16_t PREVIEW_H          = 42;
@@ -26,6 +28,7 @@ static bool s_stylesInited = false;
 static lv_style_t s_keyStyle;
 static lv_style_t s_keyLblStyle;
 
+static lv_obj_t* s_keyBtns[4][10] = {};
 static lv_obj_t* s_keyLbls[4][10] = {};
 static uint8_t s_rowLens[4] = { 10, 9, 9, 6 };
 
@@ -67,13 +70,48 @@ static bool keyHasPreview(int r, int c) {
     return false;
 }
 
-static bool isPointOnKey(lv_obj_t* btn, const lv_point_t& pt) {
-    lv_area_t coords;
-    lv_obj_get_coords(btn, &coords);
-    return pt.x >= (coords.x1 - PREVIEW_CANCEL_PAD) &&
-           pt.x <= (coords.x2 + PREVIEW_CANCEL_PAD) &&
-           pt.y >= (coords.y1 - PREVIEW_CANCEL_PAD) &&
-           pt.y <= (coords.y2 + PREVIEW_CANCEL_PAD);
+static bool findKeyAtPoint(const lv_point_t& pt, int& outR, int& outC) {
+    int bestR = -1;
+    int bestC = -1;
+    int32_t bestDist2 = INT32_MAX;
+
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < s_rowLens[r]; ++c) {
+            lv_obj_t* btn = s_keyBtns[r][c];
+            if (!btn) continue;
+            lv_area_t coords;
+            lv_obj_get_coords(btn, &coords);
+
+            int32_t dx = 0;
+            if (pt.x < coords.x1) dx = coords.x1 - pt.x;
+            else if (pt.x > coords.x2) dx = pt.x - coords.x2;
+
+            int32_t dy = 0;
+            if (pt.y < coords.y1) dy = coords.y1 - pt.y;
+            else if (pt.y > coords.y2) dy = pt.y - coords.y2;
+
+            if (dx == 0 && dy == 0) {
+                outR = r;
+                outC = c;
+                return true;
+            }
+            if (dx <= PREVIEW_CANCEL_PAD && dy <= PREVIEW_CANCEL_PAD) {
+                int32_t d2 = dx * dx + dy * dy;
+                if (d2 < bestDist2) {
+                    bestDist2 = d2;
+                    bestR = r;
+                    bestC = c;
+                }
+            }
+        }
+    }
+
+    if (bestR >= 0) {
+        outR = bestR;
+        outC = bestC;
+        return true;
+    }
+    return false;
 }
 
 static void hideKeyPreview() {
@@ -110,6 +148,42 @@ static void showKeyPreview(lv_obj_t* btn, int r, int c) {
     lv_obj_move_foreground(s_preview);
 }
 
+static void setActiveKey(int r, int c) {
+    if (r == s_activeRow && c == s_activeCol) return;
+
+    if (s_activeBtn) {
+        lv_obj_clear_state(s_activeBtn, LV_STATE_PRESSED);
+    }
+
+    if (r >= 0 && r < 4 && c >= 0 && c < s_rowLens[r] && s_keyBtns[r][c]) {
+        s_activeRow = r;
+        s_activeCol = c;
+        s_activeBtn = s_keyBtns[r][c];
+        lv_obj_add_state(s_activeBtn, LV_STATE_PRESSED);
+        if (keyHasPreview(r, c)) {
+            showKeyPreview(s_activeBtn, r, c);
+        } else {
+            hideKeyPreview();
+        }
+    } else {
+        s_activeRow = -1;
+        s_activeCol = -1;
+        s_activeBtn = nullptr;
+        hideKeyPreview();
+    }
+}
+
+static void resetPressState() {
+    if (s_activeBtn) {
+        lv_obj_clear_state(s_activeBtn, LV_STATE_PRESSED);
+    }
+    s_pressedBtn = nullptr;
+    s_activeBtn = nullptr;
+    s_activeRow = -1;
+    s_activeCol = -1;
+    hideKeyPreview();
+}
+
 static void keyEventCb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     lv_obj_t* btn = lv_event_get_target(e);
@@ -118,10 +192,17 @@ static void keyEventCb(lv_event_t* e) {
     int c = (int)(packed & 0xFF);
 
     if (code == LV_EVENT_PRESSED) {
+        if (s_activeBtn && s_activeBtn != btn) {
+            lv_obj_clear_state(s_activeBtn, LV_STATE_PRESSED);
+        }
         s_pressedBtn = btn;
-        s_pressValid = true;
+        s_activeBtn = btn;
+        s_activeRow = r;
+        s_activeCol = c;
         if (keyHasPreview(r, c)) {
             showKeyPreview(btn, r, c);
+        } else {
+            hideKeyPreview();
         }
         return;
     }
@@ -132,25 +213,21 @@ static void keyEventCb(lv_event_t* e) {
         if (!indev) return;
         lv_point_t pt;
         lv_indev_get_point(indev, &pt);
-        bool onKey = isPointOnKey(btn, pt);
-        if (!onKey && s_pressValid) {
-            s_pressValid = false;
-            hideKeyPreview();
-        } else if (onKey && !s_pressValid) {
-            s_pressValid = true;
-            if (keyHasPreview(r, c)) {
-                showKeyPreview(btn, r, c);
-            }
+        int hr = -1, hc = -1;
+        if (findKeyAtPoint(pt, hr, hc)) {
+            setActiveKey(hr, hc);
+        } else {
+            setActiveKey(-1, -1);
         }
         return;
     }
 
     if (code == LV_EVENT_PRESS_LOST) {
         if (s_pressedBtn == btn) {
-            s_pressedBtn = nullptr;
-            s_pressValid = false;
+            resetPressState();
+        } else {
+            hideKeyPreview();
         }
-        hideKeyPreview();
         return;
     }
 
@@ -160,9 +237,15 @@ static void keyEventCb(lv_event_t* e) {
             if (indev) {
                 lv_point_t pt;
                 lv_indev_get_point(indev, &pt);
-                if (!isPointOnKey(btn, pt)) {
-                    s_pressValid = false;
+                int hr = -1, hc = -1;
+                if (findKeyAtPoint(pt, hr, hc)) {
+                    setActiveKey(hr, hc);
+                } else {
+                    setActiveKey(-1, -1);
                 }
+            }
+            if (s_activeBtn) {
+                lv_obj_clear_state(s_activeBtn, LV_STATE_PRESSED);
             }
         }
         hideKeyPreview();
@@ -171,46 +254,48 @@ static void keyEventCb(lv_event_t* e) {
 
     if (code != LV_EVENT_CLICKED) return;
 
-    bool allow = true;
+    int execR = r;
+    int execC = c;
     if (s_pressedBtn == btn) {
-        allow = s_pressValid;
-        s_pressedBtn = nullptr;
-        s_pressValid = false;
+        execR = s_activeRow;
+        execC = s_activeCol;
+        resetPressState();
+    } else {
+        hideKeyPreview();
     }
-    hideKeyPreview();
-    if (!allow) return;
+    if (execR < 0 || execC < 0) return;
 
     m3PulseFeedback();
 
-    if (r == 2 && c == 0) {
+    if (execR == 2 && execC == 0) {
         if (s_symMode) s_symMode = false;
         else s_shift = !s_shift;
         updateKeyLabels();
         return;
     }
-    if (r == 2 && c == 8) {
+    if (execR == 2 && execC == 8) {
         if (s_targetTa) lv_textarea_del_char(s_targetTa);
         return;
     }
-    if (r == 3) {
-        if (c == 0) {
+    if (execR == 3) {
+        if (execC == 0) {
             s_symMode = !s_symMode;
             updateKeyLabels();
             return;
-        } else if (c == 1) {
+        } else if (execC == 1) {
             m3KeyboardHide();
             appManagerLaunchById("settings");
             return;
-        } else if (c == 2) {
+        } else if (execC == 2) {
             if (s_targetTa) lv_textarea_add_text(s_targetTa, ":)");
             return;
-        } else if (c == 3) {
+        } else if (execC == 3) {
             if (s_targetTa) lv_textarea_add_char(s_targetTa, ' ');
             return;
-        } else if (c == 4) {
+        } else if (execC == 4) {
             if (s_targetTa) lv_textarea_add_char(s_targetTa, '.');
             return;
-        } else if (c == 5) {
+        } else if (execC == 5) {
             const char* txt = s_targetTa ? lv_textarea_get_text(s_targetTa) : "";
             M3KbdEnterCb cb = s_onEnter;
             m3KeyboardHide();
@@ -219,8 +304,8 @@ static void keyEventCb(lv_event_t* e) {
         }
     }
 
-    if (!s_targetTa || !s_keyLbls[r][c]) return;
-    const char* ch = lv_label_get_text(s_keyLbls[r][c]);
+    if (!s_targetTa || !s_keyLbls[execR][execC]) return;
+    const char* ch = lv_label_get_text(s_keyLbls[execR][execC]);
     if (ch && ch[0]) {
         lv_textarea_add_text(s_targetTa, ch);
         if (!s_symMode && s_shift) {
@@ -236,6 +321,7 @@ static lv_obj_t* addKey(lv_obj_t* parent, int r, int c, int16_t x, int16_t y, in
     lv_obj_set_size(btn, w, h);
     lv_obj_add_style(btn, &s_keyStyle, 0);
     lv_obj_add_event_cb(btn, keyEventCb, LV_EVENT_ALL, (void*)(uintptr_t)((r << 8) | c));
+    s_keyBtns[r][c] = btn;
 
     lv_obj_t* lbl = lv_label_create(btn);
     lv_obj_add_style(lbl, &s_keyLblStyle, 0);
@@ -360,9 +446,7 @@ void m3KeyboardShow(lv_obj_t* textarea, M3KbdEnterCb onEnter) {
     if (!s_kbd) m3KeyboardInit();
     s_targetTa = textarea;
     s_onEnter = onEnter;
-    s_pressedBtn = nullptr;
-    s_pressValid = false;
-    hideKeyPreview();
+    resetPressState();
     m3KeyboardRefreshTheme();
     lv_obj_clear_flag(s_kbd, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_kbd);
@@ -370,9 +454,7 @@ void m3KeyboardShow(lv_obj_t* textarea, M3KbdEnterCb onEnter) {
 
 void m3KeyboardHide() {
     if (!s_kbd) return;
-    s_pressedBtn = nullptr;
-    s_pressValid = false;
-    hideKeyPreview();
+    resetPressState();
     lv_obj_add_flag(s_kbd, LV_OBJ_FLAG_HIDDEN);
     if (s_targetTa) {
         lv_obj_clear_state(s_targetTa, LV_STATE_FOCUSED);

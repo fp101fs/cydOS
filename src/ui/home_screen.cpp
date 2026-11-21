@@ -113,22 +113,27 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
     lv_obj_add_event_cb(wrap, appIconClickCb, LV_EVENT_CLICKED, (void*)meta);
     lv_obj_add_event_cb(wrap, appIconLongPressCb, LV_EVENT_LONG_PRESSED, (void*)meta);
 
-    lv_obj_t* icoBox = lv_obj_create(wrap);
-    lv_obj_set_size(icoBox, ICON_BOX_SZ, ICON_BOX_SZ);
-    lv_obj_align(icoBox, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(icoBox, lv_color_hex(meta->containerHex), 0);
-    lv_obj_set_style_bg_opa(icoBox, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(icoBox, 1, 0);
-    lv_obj_set_style_border_color(icoBox, lv_color_hex(meta->accentHex), 0);
-    lv_obj_set_style_border_opa(icoBox, LV_OPA_30, 0);
-    lv_obj_set_style_radius(icoBox, M3Dim::RADIUS_CARD, 0);
-    lv_obj_clear_flag(icoBox, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    if (meta->iconImg) {
+        lv_obj_t* img = lv_img_create(wrap);
+        lv_img_set_src(img, meta->iconImg);
+        lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_clear_flag(img, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        lv_obj_t* icoBox = lv_obj_create(wrap);
+        lv_obj_set_size(icoBox, ICON_BOX_SZ, ICON_BOX_SZ);
+        lv_obj_align(icoBox, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_bg_color(icoBox, lv_color_hex(meta->containerHex), 0);
+        lv_obj_set_style_bg_opa(icoBox, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(icoBox, 0, 0);
+        lv_obj_set_style_radius(icoBox, M3Dim::RADIUS_CARD, 0);
+        lv_obj_clear_flag(icoBox, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t* ico = lv_label_create(icoBox);
-    lv_label_set_text(ico, meta->icon);
-    lv_obj_set_style_text_color(ico, lv_color_hex(meta->accentHex), 0);
-    lv_obj_set_style_text_font(ico, &lv_font_montserrat_20, 0);
-    lv_obj_center(ico);
+        lv_obj_t* ico = lv_label_create(icoBox);
+        lv_label_set_text(ico, meta->icon);
+        lv_obj_set_style_text_color(ico, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_20, 0);
+        lv_obj_center(ico);
+    }
 
     lv_obj_t* lbl = lv_label_create(wrap);
     lv_label_set_text(lbl, meta->name);

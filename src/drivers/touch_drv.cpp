@@ -1,12 +1,114 @@
 #include "touch_drv.h"
 #include "display_drv.h"
 #include "../config/hw_config.h"
+#include "../theme/m3_theme.h"
 #include <Preferences.h>
 
 static int16_t s_calX0 = 200, s_calX1 = 3900;
 static int16_t s_calY0 = 200, s_calY1 = 3700;
 static bool s_calLoaded = false;
+static uint8_t s_sensitivity = TOUCH_SENS_DEFAULT;
+static uint16_t s_zMin = TOUCH_Z_MIN;
+static int16_t s_maxDelta = TOUCH_SAMPLE_MAX_DELTA;
 static lv_indev_drv_t s_indev_drv;
+
+// ============================================================================
+// Tap Pulse Ripple Overlay (2-slot pool on lv_layer_sys, zero per-tap alloc)
+// ============================================================================
+
+static constexpr uint8_t  TAP_POOL_SIZE = 2;
+static constexpr int16_t  TAP_D_START   = 8;
+static constexpr int16_t  TAP_D_END     = 38;
+static constexpr uint16_t TAP_ANIM_MS   = 230;
+
+struct TapRipple {
+    lv_obj_t* obj;
+    int16_t   cx;
+    int16_t   cy;
+};
+
+static TapRipple s_tapPool[TAP_POOL_SIZE] = {};
+static uint8_t   s_tapNextIdx = 0;
+
+static void tapRippleExecCb(void* var, int32_t p) {
+    TapRipple* r = (TapRipple*)var;
+    if (!r || !r->obj) return;
+
+    int16_t d = (int16_t)(TAP_D_START + ((int32_t)(TAP_D_END - TAP_D_START) * p) / 100);
+    lv_obj_set_size(r->obj, d, d);
+    lv_obj_set_pos(r->obj, r->cx - d / 2, r->cy - d / 2);
+
+    // Smooth fade out for both crisp ring border and subtle inner glow
+    lv_opa_t borderOpa = (lv_opa_t)(((100 - p) * 230) / 100);
+    lv_opa_t bgOpa     = (lv_opa_t)(((100 - p) * 72) / 100);
+    lv_obj_set_style_border_opa(r->obj, borderOpa, 0);
+    lv_obj_set_style_bg_opa(r->obj, bgOpa, 0);
+}
+
+static void tapRippleReadyCb(lv_anim_t* a) {
+    TapRipple* r = (TapRipple*)a->var;
+    if (r && r->obj) {
+        lv_obj_add_flag(r->obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void tapRippleInit() {
+    for (uint8_t i = 0; i < TAP_POOL_SIZE; ++i) {
+        lv_obj_t* ring = lv_obj_create(lv_layer_sys());
+        lv_obj_set_size(ring, TAP_D_START, TAP_D_START);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(ring, 2, 0);
+        lv_obj_set_style_shadow_width(ring, 0, 0);
+        lv_obj_set_style_pad_all(ring, 0, 0);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(ring, LV_OBJ_FLAG_HIDDEN);
+        s_tapPool[i].obj = ring;
+    }
+}
+
+static void tapRippleAsyncCb(void* userData) {
+    uint32_t packed = (uint32_t)(uintptr_t)userData;
+    int16_t cx = (int16_t)(packed & 0xFFFFU);
+    int16_t cy = (int16_t)((packed >> 16) & 0xFFFFU);
+
+    TapRipple* r = &s_tapPool[s_tapNextIdx];
+    s_tapNextIdx = (uint8_t)((s_tapNextIdx + 1) % TAP_POOL_SIZE);
+    if (!r->obj) return;
+
+    lv_anim_del(r, tapRippleExecCb);
+    r->cx = cx;
+    r->cy = cy;
+
+    lv_color_t col = lv_color_hex(m3PrimaryHex());
+    lv_obj_set_style_border_color(r->obj, col, 0);
+    lv_obj_set_style_bg_color(r->obj, col, 0);
+    lv_obj_clear_flag(r->obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(r->obj);
+    tapRippleExecCb(r, 0);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, r);
+    lv_anim_set_values(&a, 0, 100);
+    lv_anim_set_time(&a, TAP_ANIM_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, tapRippleExecCb);
+    lv_anim_set_ready_cb(&a, tapRippleReadyCb);
+    lv_anim_start(&a);
+}
+
+static uint16_t sensToZMin(uint8_t percent) {
+    if (percent > 100) percent = 100;
+    uint32_t span = (uint32_t)(TOUCH_Z_MIN_CEIL - TOUCH_Z_MIN_FLOOR);
+    return (uint16_t)(TOUCH_Z_MIN_CEIL - ((uint32_t)percent * span) / 100U);
+}
+
+static int16_t sensToMaxDelta(uint8_t percent) {
+    if (percent > 100) percent = 100;
+    int32_t span = (int32_t)(TOUCH_SAMPLE_MAX_DELTA_MAX - TOUCH_SAMPLE_MAX_DELTA);
+    return (int16_t)(TOUCH_SAMPLE_MAX_DELTA + ((int32_t)percent * span) / 100);
+}
 
 static inline void tPinOut(int pin, bool v) { digitalWrite(pin, v ? HIGH : LOW); }
 static inline int tPinIn(int pin) { return digitalRead(pin); }
@@ -39,8 +141,10 @@ static uint16_t xptTransfer(uint8_t cmd) {
 }
 
 static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
+    // At ultra-low Z thresholds (< 15), gate on hardware PENIRQ to prevent ghost taps
+    if (s_zMin < 15 && tPinIn(PIN_TOUCH_IRQ) != LOW) return false;
     z = xptTransfer(0xB0);
-    if (z < TOUCH_Z_MIN) return false;
+    if (z < s_zMin) return false;
     x = xptTransfer(0xD0);
     y = xptTransfer(0x90);
     return true;
@@ -57,7 +161,7 @@ static bool xptSampleFiltered(uint16_t& rx, uint16_t& ry) {
     int16_t dy = (int16_t)ry1 - (int16_t)ry2;
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
-    if (dx > TOUCH_SAMPLE_MAX_DELTA || dy > TOUCH_SAMPLE_MAX_DELTA) return false;
+    if (dx > s_maxDelta || dy > s_maxDelta) return false;
 
     rx = (uint16_t)((rx1 + rx2) / 2);
     ry = (uint16_t)((ry1 + ry2) / 2);
@@ -92,14 +196,21 @@ static void lvglTouchReadCb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     (void)drv;
     static int16_t lastX = 0;
     static int16_t lastY = 0;
+    static bool wasPressed = false;
 
     TouchPoint pt;
     if (touchReadPoint(pt)) {
         lastX = pt.x;
         lastY = pt.y;
         data->state = LV_INDEV_STATE_PR;
+        if (!wasPressed) {
+            uint32_t packed = ((uint32_t)(uint16_t)pt.y << 16) | (uint32_t)(uint16_t)pt.x;
+            lv_async_call(tapRippleAsyncCb, (void*)(uintptr_t)packed);
+        }
+        wasPressed = true;
     } else {
         data->state = LV_INDEV_STATE_REL;
+        wasPressed = false;
     }
     data->point.x = lastX;
     data->point.y = lastY;
@@ -122,11 +233,17 @@ void touchInit() {
             s_calY1 = prefs.getShort("y1", s_calY1);
             s_calLoaded = true;
         }
+        s_sensitivity = prefs.getUChar("sens", TOUCH_SENS_DEFAULT);
+        if (s_sensitivity > 100) s_sensitivity = TOUCH_SENS_DEFAULT;
         prefs.end();
     }
-    Serial.printf("[TOUCH] cal loaded=%d x0=%d x1=%d y0=%d y1=%d Z_MIN=%d MAX_DELTA=%d\n",
+    s_zMin = sensToZMin(s_sensitivity);
+    s_maxDelta = sensToMaxDelta(s_sensitivity);
+    Serial.printf("[TOUCH] cal loaded=%d x0=%d x1=%d y0=%d y1=%d SENS=%u%% Z_MIN=%u MAX_DELTA=%d\n",
                   s_calLoaded ? 1 : 0, s_calX0, s_calX1, s_calY0, s_calY1,
-                  TOUCH_Z_MIN, TOUCH_SAMPLE_MAX_DELTA);
+                  (unsigned)s_sensitivity, (unsigned)s_zMin, (int)s_maxDelta);
+
+    tapRippleInit();
 
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -136,6 +253,25 @@ void touchInit() {
 }
 
 bool touchIsCalibrated() { return s_calLoaded; }
+
+void touchSetSensitivity(uint8_t percent, bool saveNvs) {
+    if (percent > 100) percent = 100;
+    s_sensitivity = percent;
+    s_zMin = sensToZMin(percent);
+    s_maxDelta = sensToMaxDelta(percent);
+    if (saveNvs) {
+        Preferences prefs;
+        if (prefs.begin("touch", false)) {
+            prefs.putUChar("sens", s_sensitivity);
+            prefs.end();
+        }
+        Serial.printf("[TOUCH] sensitivity saved=%u%% (Z_MIN=%u, MAX_DELTA=%d)\n",
+                      (unsigned)s_sensitivity, (unsigned)s_zMin, (int)s_maxDelta);
+    }
+}
+
+uint8_t touchGetSensitivity() { return s_sensitivity; }
+uint16_t touchGetZThreshold() { return s_zMin; }
 
 static void waitTap(uint16_t& x, uint16_t& y) {
     while (true) {
