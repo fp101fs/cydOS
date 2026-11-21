@@ -20,7 +20,9 @@
 // ============================================================================
 
 static constexpr const char* NVS_NS              = "companion";
+static constexpr const char* NVS_CHATS_NS        = "wachats";
 static constexpr size_t      WS_MAX_FRAME_BYTES  = 4096;
+static constexpr uint32_t    PERSIST_DEBOUNCE_MS = 1200;
 static constexpr uint32_t    CONNECT_TIMEOUT_MS  = 4000;
 static constexpr uint32_t    HANDSHAKE_TIMEOUT_MS = 4000;
 static constexpr uint32_t    HEARTBEAT_MS        = 20000;
@@ -49,8 +51,29 @@ static CompanionMessage   s_msgs[COMPANION_MAX_MESSAGES];
 static size_t             s_msgCount         = 0;
 static uint32_t           s_dataGen          = 0;
 
+struct ChatHistorySlot {
+    char                id[COMPANION_ID_MAX];
+    CompanionChatBubble bubbles[COMPANION_CHAT_BUBBLES_MAX];
+    size_t              count;
+};
+
+struct AvatarSlot {
+    char         id[COMPANION_ID_MAX];
+    bool         valid;
+    uint8_t*     pixels; // heap-allocated lazily (COMPANION_AVATAR_SIZE * COMPANION_AVATAR_SIZE * 2)
+    lv_img_dsc_t dsc;
+};
+
+static ChatHistorySlot*   s_chatHist         = nullptr;
+static AvatarSlot         s_avatars[COMPANION_MAX_AVATARS];
+static uint8_t            s_avatarNextVictim = 0;
+
+static volatile bool      s_persistDirty     = false;
+static uint32_t           s_persistDirtyAtMs = 0;
+
 static CompanionReplyState s_replyState      = {0, CompanionReplyStatus::IDLE, "", ""};
 static uint32_t            s_nextReqId       = 1;
+static char                s_pendingReplyText[COMPANION_BUBBLE_TEXT_MAX] = "";
 
 static bool s_hasNewAlert                    = false;
 static char s_alertSender[COMPANION_SENDER_MAX] = "";
@@ -121,6 +144,77 @@ static uint8_t countUnreadLocked() {
 // Message Store Helpers (called under COMP_LOCK)
 // ============================================================================
 
+static void markPersistDirtyLocked() {
+    s_persistDirty = true;
+    s_persistDirtyAtMs = millis();
+}
+
+static ChatHistorySlot* findOrAllocHistoryLocked(const char* id) {
+    if (!id || !id[0] || !s_chatHist) return nullptr;
+    for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+        if (s_chatHist[i].id[0] && strcmp(s_chatHist[i].id, id) == 0) {
+            return &s_chatHist[i];
+        }
+    }
+    for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+        if (!s_chatHist[i].id[0]) {
+            copyStr(s_chatHist[i].id, sizeof(s_chatHist[i].id), id);
+            s_chatHist[i].count = 0;
+            return &s_chatHist[i];
+        }
+    }
+    // Evict a slot whose id is no longer in s_msgs, else slot 0
+    size_t evict = 0;
+    for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+        bool inUse = false;
+        for (size_t m = 0; m < s_msgCount; ++m) {
+            if (strcmp(s_msgs[m].id, s_chatHist[i].id) == 0) {
+                inUse = true;
+                break;
+            }
+        }
+        if (!inUse) {
+            evict = i;
+            break;
+        }
+    }
+    copyStr(s_chatHist[evict].id, sizeof(s_chatHist[evict].id), id);
+    s_chatHist[evict].count = 0;
+    return &s_chatHist[evict];
+}
+
+static void appendBubbleLocked(const char* id, const char* sender, const char* text,
+                               const char* timeStr, bool outgoing) {
+    if (!id || !id[0] || !text || !text[0]) return;
+    ChatHistorySlot* slot = findOrAllocHistoryLocked(id);
+    if (!slot) return;
+
+    // Deduplicate against the most recent bubble in this chat
+    if (slot->count > 0) {
+        const CompanionChatBubble& last = slot->bubbles[slot->count - 1];
+        if (last.outgoing == outgoing && strcmp(last.text, text) == 0) {
+            if (timeStr && timeStr[0]) {
+                copyStr(slot->bubbles[slot->count - 1].timeStr, sizeof(slot->bubbles[slot->count - 1].timeStr), timeStr);
+            }
+            return;
+        }
+    }
+
+    if (slot->count >= COMPANION_CHAT_BUBBLES_MAX) {
+        for (size_t i = 1; i < COMPANION_CHAT_BUBBLES_MAX; ++i) {
+            slot->bubbles[i - 1] = slot->bubbles[i];
+        }
+        slot->count = COMPANION_CHAT_BUBBLES_MAX - 1;
+    }
+
+    CompanionChatBubble& b = slot->bubbles[slot->count++];
+    copyStr(b.sender, sizeof(b.sender), sender ? sender : "");
+    copyStr(b.text, sizeof(b.text), text);
+    copyStr(b.timeStr, sizeof(b.timeStr), timeStr ? timeStr : "");
+    b.outgoing = outgoing;
+    markPersistDirtyLocked();
+}
+
 static void upsertMessageLocked(const CompanionMessage& incoming, bool isLive) {
     if (!incoming.id[0]) return;
 
@@ -131,8 +225,16 @@ static void upsertMessageLocked(const CompanionMessage& incoming, bool isLive) {
             CompanionMessage updated = incoming;
             if (!isLive) {
                 updated.unread = s_msgs[i].unread;
+                updated.unreadCount = s_msgs[i].unreadCount;
+                updated.lastOutgoing = s_msgs[i].lastOutgoing;
             } else if (!textChanged) {
                 updated.unread = s_msgs[i].unread;
+                updated.unreadCount = s_msgs[i].unreadCount;
+                updated.lastOutgoing = s_msgs[i].lastOutgoing;
+            } else {
+                updated.unread = true;
+                updated.unreadCount = (s_msgs[i].unreadCount < 99) ? (uint8_t)(s_msgs[i].unreadCount + 1) : 99;
+                updated.lastOutgoing = false;
             }
             // Move to front (index 0 = newest)
             for (size_t j = i; j > 0; --j) {
@@ -140,6 +242,7 @@ static void upsertMessageLocked(const CompanionMessage& incoming, bool isLive) {
             }
             s_msgs[0] = updated;
             s_dataGen++;
+            markPersistDirtyLocked();
             if (isLive && textChanged) {
                 s_hasNewAlert = true;
                 copyStr(s_alertSender, sizeof(s_alertSender), updated.sender);
@@ -155,10 +258,14 @@ static void upsertMessageLocked(const CompanionMessage& incoming, bool isLive) {
         s_msgs[j] = s_msgs[j - 1];
     }
     s_msgs[0] = incoming;
+    if (s_msgs[0].unread && s_msgs[0].unreadCount == 0) {
+        s_msgs[0].unreadCount = 1;
+    }
     if (s_msgCount < COMPANION_MAX_MESSAGES) {
         s_msgCount++;
     }
     s_dataGen++;
+    markPersistDirtyLocked();
 
     if (isLive) {
         s_hasNewAlert = true;
@@ -176,7 +283,17 @@ static void removeMessageByIdLocked(const char* id) {
             }
             s_msgCount--;
             s_dataGen++;
-            return;
+            markPersistDirtyLocked();
+            break;
+        }
+    }
+    if (s_chatHist) {
+        for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+            if (s_chatHist[i].id[0] && strcmp(s_chatHist[i].id, id) == 0) {
+                s_chatHist[i].id[0] = '\0';
+                s_chatHist[i].count = 0;
+                break;
+            }
         }
     }
 }
@@ -384,7 +501,7 @@ static void parseNotificationObj(JsonObjectConst obj, CompanionMessage* out) {
     const char* conv = obj["conversation"] | "";
     const char* sender = obj["sender"] | "";
     if (conv[0] && sender[0] && strcmp(conv, sender) != 0) {
-        snprintf(out->sender, sizeof(out->sender), "%s: %s", conv, sender);
+        copyStr(out->sender, sizeof(out->sender), conv);
     } else if (sender[0]) {
         copyStr(out->sender, sizeof(out->sender), sender);
     } else if (conv[0]) {
@@ -397,7 +514,69 @@ static void parseNotificationObj(JsonObjectConst obj, CompanionMessage* out) {
     out->timestampMs = obj["timestamp"] | (uint64_t)0;
     out->canReply = obj["can_reply"] | false;
     out->unread = true;
+    out->unreadCount = 1;
+    out->lastOutgoing = false;
     out->dismissed = false;
+}
+
+static void ingestBubblesLocked(JsonObjectConst obj, const CompanionMessage& msg) {
+    JsonArrayConst arr = obj["messages"].as<JsonArrayConst>();
+    if (!arr.isNull() && arr.size() > 0) {
+        for (JsonObjectConst m : arr) {
+            const char* mSender = m["sender"] | msg.sender;
+            const char* mText   = m["text"]   | "";
+            const char* mTime   = m["time"]   | msg.timeStr;
+            bool mOut           = m["outgoing"] | false;
+            if (mText[0]) {
+                appendBubbleLocked(msg.id, mSender, mText, mTime, mOut);
+            }
+        }
+    } else if (msg.text[0]) {
+        const char* rawSender = obj["sender"] | msg.sender;
+        appendBubbleLocked(msg.id, rawSender, msg.text, msg.timeStr, false);
+    }
+}
+
+static void storeAvatarLocked(const char* id, const uint8_t* rgb565, size_t byteLen, uint8_t* preallocBuf) {
+    if (!id || !id[0] || !rgb565) return;
+    constexpr size_t EXPECTED_BYTES = COMPANION_AVATAR_SIZE * COMPANION_AVATAR_SIZE * 2;
+    if (byteLen != EXPECTED_BYTES) return;
+
+    AvatarSlot* slot = nullptr;
+    for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+        if (s_avatars[i].valid && strcmp(s_avatars[i].id, id) == 0) {
+            slot = &s_avatars[i];
+            break;
+        }
+    }
+    if (!slot) {
+        for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+            if (!s_avatars[i].valid) {
+                slot = &s_avatars[i];
+                break;
+            }
+        }
+    }
+    if (!slot) {
+        slot = &s_avatars[s_avatarNextVictim % COMPANION_MAX_AVATARS];
+        s_avatarNextVictim++;
+    }
+
+    if (!slot->pixels) {
+        slot->pixels = preallocBuf;
+    }
+    if (!slot->pixels) return;
+
+    copyStr(slot->id, sizeof(slot->id), id);
+    memcpy(slot->pixels, rgb565, EXPECTED_BYTES);
+    memset(&slot->dsc, 0, sizeof(slot->dsc));
+    slot->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    slot->dsc.header.w  = COMPANION_AVATAR_SIZE;
+    slot->dsc.header.h  = COMPANION_AVATAR_SIZE;
+    slot->dsc.data_size = EXPECTED_BYTES;
+    slot->dsc.data      = slot->pixels;
+    slot->valid         = true;
+    s_dataGen++;
 }
 
 static void handleIncomingJson(const char* payload, WiFiClient& cli) {
@@ -446,11 +625,13 @@ static void handleIncomingJson(const char* payload, WiFiClient& cli) {
 
     if (strcmp(type, "notification") == 0) {
         CompanionMessage msg;
-        parseNotificationObj(doc.as<JsonObjectConst>(), &msg);
+        JsonObjectConst obj = doc.as<JsonObjectConst>();
+        parseNotificationObj(obj, &msg);
         if (!msg.id[0]) return;
 
         COMP_LOCK();
         upsertMessageLocked(msg, true);
+        ingestBubblesLocked(obj, msg);
         COMP_UNLOCK();
         return;
     }
@@ -468,9 +649,54 @@ static void handleIncomingJson(const char* payload, WiFiClient& cli) {
             CompanionMessage msg;
             parseNotificationObj(obj, &msg);
             msg.unread = false;
+            msg.unreadCount = 0;
             upsertMessageLocked(msg, false);
+            ingestBubblesLocked(obj, msg);
         }
         COMP_UNLOCK();
+        return;
+    }
+
+    if (strcmp(type, "avatar") == 0) {
+        const char* id  = doc["id"] | "";
+        uint16_t w      = doc["w"]  | (uint16_t)0;
+        uint16_t h      = doc["h"]  | (uint16_t)0;
+        const char* b64 = doc["rgb565"] | "";
+        if (!id[0] || w != COMPANION_AVATAR_SIZE || h != COMPANION_AVATAR_SIZE || !b64[0]) return;
+
+        constexpr size_t AV_BYTES = COMPANION_AVATAR_SIZE * COMPANION_AVATAR_SIZE * 2;
+        uint8_t* decBuf = (uint8_t*)malloc(AV_BYTES);
+        if (!decBuf) return;
+        size_t outLen = 0;
+        int rc = mbedtls_base64_decode(decBuf, AV_BYTES, &outLen,
+                                       (const unsigned char*)b64, strlen(b64));
+        if (rc == 0 && outLen == AV_BYTES) {
+            // Pre-allocate pixel buffer outside critical section if needed
+            uint8_t* newBuf = (uint8_t*)malloc(AV_BYTES);
+            bool usedNewBuf = false;
+            COMP_LOCK();
+            bool hasExistingBuf = false;
+            for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+                if (s_avatars[i].valid && strcmp(s_avatars[i].id, id) == 0 && s_avatars[i].pixels) {
+                    hasExistingBuf = true;
+                    break;
+                }
+            }
+            if (!hasExistingBuf) {
+                for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+                    if (!s_avatars[i].valid) {
+                        if (!s_avatars[i].pixels && newBuf) {
+                            usedNewBuf = true;
+                        }
+                        break;
+                    }
+                }
+            }
+            storeAvatarLocked(id, decBuf, outLen, usedNewBuf ? newBuf : nullptr);
+            COMP_UNLOCK();
+            if (!usedNewBuf && newBuf) free(newBuf);
+        }
+        free(decBuf);
         return;
     }
 
@@ -490,6 +716,24 @@ static void handleIncomingJson(const char* payload, WiFiClient& cli) {
         if (reqId == 0 || reqId == s_replyState.reqId) {
             s_replyState.status = st;
             copyStr(s_replyState.detail, sizeof(s_replyState.detail), detail);
+            if (st == CompanionReplyStatus::SENT && s_replyState.notifId[0] && s_pendingReplyText[0]) {
+                char tBuf[COMPANION_TIME_MAX] = "";
+                if (g_sys.timeSynced) {
+                    snprintf(tBuf, sizeof(tBuf), "%02u:%02u", (unsigned)g_sys.hour, (unsigned)g_sys.minute);
+                }
+                appendBubbleLocked(s_replyState.notifId, "You", s_pendingReplyText, tBuf, true);
+                for (size_t i = 0; i < s_msgCount; ++i) {
+                    if (strcmp(s_msgs[i].id, s_replyState.notifId) == 0) {
+                        copyStr(s_msgs[i].text, sizeof(s_msgs[i].text), s_pendingReplyText);
+                        if (tBuf[0]) copyStr(s_msgs[i].timeStr, sizeof(s_msgs[i].timeStr), tBuf);
+                        s_msgs[i].lastOutgoing = true;
+                        s_msgs[i].unread = false;
+                        s_msgs[i].unreadCount = 0;
+                        break;
+                    }
+                }
+                s_pendingReplyText[0] = '\0';
+            }
             s_dataGen++;
         }
         COMP_UNLOCK();
@@ -515,13 +759,155 @@ static void handleIncomingJson(const char* payload, WiFiClient& cli) {
 }
 
 // ============================================================================
+// NVS Chat Persistence (survives CYD reboots)
+// ============================================================================
+
+static void loadChatsFromNvs() {
+    Preferences prefs;
+    if (!prefs.begin(NVS_CHATS_NS, true)) return;
+
+    uint8_t cnt = prefs.getUChar("cnt", 0);
+    if (cnt > COMPANION_MAX_MESSAGES) cnt = COMPANION_MAX_MESSAGES;
+
+    for (uint8_t i = 0; i < cnt; ++i) {
+        char key[6];
+        snprintf(key, sizeof(key), "c%u", (unsigned)i);
+        String raw = prefs.getString(key, "");
+        if (raw.length() == 0) continue;
+
+        JsonDocument doc;
+        if (deserializeJson(doc, raw)) continue;
+
+        CompanionMessage msg;
+        memset(&msg, 0, sizeof(msg));
+        copyStr(msg.id, sizeof(msg.id), doc["id"] | "");
+        if (!msg.id[0]) continue;
+        copyStr(msg.sender, sizeof(msg.sender), doc["sn"] | "WhatsApp");
+        copyStr(msg.text, sizeof(msg.text), doc["tx"] | "");
+        copyStr(msg.timeStr, sizeof(msg.timeStr), doc["tm"] | "");
+        msg.timestampMs  = doc["ts"] | (uint64_t)0;
+        msg.canReply     = doc["cr"] | false;
+        msg.unread       = doc["ur"] | false;
+        msg.unreadCount  = (uint8_t)(doc["uc"] | 0);
+        msg.lastOutgoing = doc["lo"] | false;
+        msg.dismissed    = false;
+
+        COMP_LOCK();
+        if (s_msgCount < COMPANION_MAX_MESSAGES) {
+            s_msgs[s_msgCount++] = msg;
+            JsonArrayConst arr = doc["b"].as<JsonArrayConst>();
+            if (!arr.isNull()) {
+                for (JsonObjectConst bo : arr) {
+                    const char* bs = bo["s"] | "";
+                    const char* bt = bo["t"] | "";
+                    const char* bm = bo["m"] | "";
+                    bool        boOut = bo["o"] | false;
+                    if (bt[0]) {
+                        appendBubbleLocked(msg.id, bs, bt, bm, boOut);
+                    }
+                }
+            }
+        }
+        COMP_UNLOCK();
+    }
+    prefs.end();
+
+    COMP_LOCK();
+    s_persistDirty = false;
+    if (s_msgCount > 0) s_dataGen++;
+    COMP_UNLOCK();
+}
+
+static void saveChatsToNvs() {
+    size_t cnt = 0;
+    COMP_LOCK();
+    cnt = s_msgCount;
+    if (cnt > COMPANION_MAX_MESSAGES) cnt = COMPANION_MAX_MESSAGES;
+    s_persistDirty = false;
+    COMP_UNLOCK();
+
+    Preferences prefs;
+    if (!prefs.begin(NVS_CHATS_NS, false)) return;
+
+    prefs.putUChar("cnt", (uint8_t)cnt);
+    for (size_t i = 0; i < cnt; ++i) {
+        CompanionMessage oneMsg;
+        bool valid = false;
+        COMP_LOCK();
+        if (i < s_msgCount) {
+            oneMsg = s_msgs[i];
+            valid = true;
+        }
+        COMP_UNLOCK();
+        if (!valid) break;
+
+        JsonDocument doc;
+        doc["id"] = oneMsg.id;
+        doc["sn"] = oneMsg.sender;
+        doc["tx"] = oneMsg.text;
+        doc["tm"] = oneMsg.timeStr;
+        doc["ts"] = oneMsg.timestampMs;
+        doc["cr"] = oneMsg.canReply;
+        doc["ur"] = oneMsg.unread;
+        doc["uc"] = oneMsg.unreadCount;
+        doc["lo"] = oneMsg.lastOutgoing;
+
+        // Persist up to the 4 most recent bubbles per chat (copied one at a time for minimal stack usage)
+        JsonArray arr = doc["b"].to<JsonArray>();
+        for (size_t k = 0; k < 4; ++k) {
+            CompanionChatBubble bOne;
+            bool gotB = false;
+            COMP_LOCK();
+            if (s_chatHist) {
+                for (size_t h = 0; h < COMPANION_MAX_MESSAGES; ++h) {
+                    if (s_chatHist[h].id[0] && strcmp(s_chatHist[h].id, oneMsg.id) == 0) {
+                        size_t total = s_chatHist[h].count;
+                        size_t start = (total > 4) ? (total - 4) : 0;
+                        if (start + k < total) {
+                            bOne = s_chatHist[h].bubbles[start + k];
+                            gotB = true;
+                        }
+                        break;
+                    }
+                }
+            }
+            COMP_UNLOCK();
+            if (!gotB) break;
+            JsonObject bo = arr.add<JsonObject>();
+            bo["s"] = bOne.sender;
+            bo["t"] = bOne.text;
+            bo["m"] = bOne.timeStr;
+            bo["o"] = bOne.outgoing;
+        }
+
+        String out;
+        serializeJson(doc, out);
+        char key[6];
+        snprintf(key, sizeof(key), "c%u", (unsigned)i);
+        prefs.putString(key, out);
+    }
+    for (size_t i = cnt; i < COMPANION_MAX_MESSAGES; ++i) {
+        char key[6];
+        snprintf(key, sizeof(key), "c%u", (unsigned)i);
+        prefs.remove(key);
+    }
+    prefs.end();
+}
+
+// ============================================================================
 // Background FreeRTOS Worker Task
 // ============================================================================
 
 static void companionWorkerTask(void* param) {
     (void)param;
-    static char rxBuf[WS_MAX_FRAME_BYTES];
-    static char txBuf[TX_MSG_MAX];
+    char* rxBuf = (char*)malloc(WS_MAX_FRAME_BYTES);
+    char* txBuf = (char*)malloc(TX_MSG_MAX);
+    if (!rxBuf || !txBuf) {
+        if (rxBuf) free(rxBuf);
+        if (txBuf) free(txBuf);
+        vTaskDelete(nullptr);
+        return;
+    }
 
     WiFiClient cli;
     uint32_t backoffMs = BACKOFF_MIN_MS;
@@ -530,6 +916,10 @@ static void companionWorkerTask(void* param) {
     uint32_t lastPingMs = 0;
 
     for (;;) {
+        // Debounced flush of persisted WhatsApp chats to NVS flash
+        if (s_persistDirty && (uint32_t)(millis() - s_persistDirtyAtMs) >= PERSIST_DEBOUNCE_MS) {
+            saveChatsToNvs();
+        }
         char host[COMPANION_HOST_MAX];
         uint16_t port = COMPANION_DEFAULT_PORT;
         char token[COMPANION_TOKEN_MAX];
@@ -607,7 +997,7 @@ static void companionWorkerTask(void* param) {
             helloDoc["type"] = "hello";
             helloDoc["device"] = "Pixel-CYD";
             helloDoc["token"] = token;
-            size_t len = serializeJson(helloDoc, txBuf, sizeof(txBuf));
+            size_t len = serializeJson(helloDoc, txBuf, TX_MSG_MAX);
             if (len == 0 || !wsSendText(cli, txBuf)) {
                 cli.stop();
                 nextRetryMs = millis() + backoffMs;
@@ -620,7 +1010,7 @@ static void companionWorkerTask(void* param) {
         }
 
         // Connected loop step: poll inbound frames
-        int res = wsPollFrame(cli, rxBuf, sizeof(rxBuf));
+        int res = wsPollFrame(cli, rxBuf, WS_MAX_FRAME_BYTES);
         if (res < 0) {
             cli.stop();
             COMP_LOCK();
@@ -652,7 +1042,7 @@ static void companionWorkerTask(void* param) {
         bool hasTx = false;
         COMP_LOCK();
         if (s_connState == CompanionConnState::CONNECTED) {
-            hasTx = dequeueTxLocked(txBuf, sizeof(txBuf));
+            hasTx = dequeueTxLocked(txBuf, TX_MSG_MAX);
         }
         COMP_UNLOCK();
 
@@ -692,6 +1082,10 @@ static void companionWorkerTask(void* param) {
 // ============================================================================
 
 void companionMgrInit() {
+    if (!s_chatHist) {
+        s_chatHist = (ChatHistorySlot*)calloc(COMPANION_MAX_MESSAGES, sizeof(ChatHistorySlot));
+    }
+
     Preferences prefs;
     if (prefs.begin(NVS_NS, true)) {
         String h = prefs.getString("host", "");
@@ -708,6 +1102,9 @@ void companionMgrInit() {
         s_connState = s_host[0] ? CompanionConnState::DISCONNECTED : CompanionConnState::UNCONFIGURED;
         COMP_UNLOCK();
     }
+
+    // Restore persisted WhatsApp chats & conversation bubbles from NVS flash
+    loadChatsFromNvs();
 
     if (!s_workerStarted) {
         s_workerStarted = true;
@@ -890,9 +1287,11 @@ void companionMarkRead(const char* id) {
     if (!id || !id[0]) return;
     COMP_LOCK();
     for (size_t i = 0; i < s_msgCount; ++i) {
-        if (strcmp(s_msgs[i].id, id) == 0 && s_msgs[i].unread) {
+        if (strcmp(s_msgs[i].id, id) == 0 && (s_msgs[i].unread || s_msgs[i].unreadCount > 0)) {
             s_msgs[i].unread = false;
+            s_msgs[i].unreadCount = 0;
             s_dataGen++;
+            markPersistDirtyLocked();
             break;
         }
     }
@@ -903,20 +1302,81 @@ void companionMarkAllRead() {
     COMP_LOCK();
     bool changed = false;
     for (size_t i = 0; i < s_msgCount; ++i) {
-        if (s_msgs[i].unread) {
+        if (s_msgs[i].unread || s_msgs[i].unreadCount > 0) {
             s_msgs[i].unread = false;
+            s_msgs[i].unreadCount = 0;
             changed = true;
         }
     }
-    if (changed) s_dataGen++;
+    if (changed) {
+        s_dataGen++;
+        markPersistDirtyLocked();
+    }
     COMP_UNLOCK();
 }
 
 void companionClearLocalCache() {
     COMP_LOCK();
     s_msgCount = 0;
+    if (s_chatHist) {
+        for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+            s_chatHist[i].id[0] = '\0';
+            s_chatHist[i].count = 0;
+        }
+    }
+    for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+        s_avatars[i].valid = false;
+        s_avatars[i].id[0] = '\0';
+    }
     s_dataGen++;
+    markPersistDirtyLocked();
     COMP_UNLOCK();
+}
+
+size_t companionGetChatBubbleCount(const char* chatId) {
+    if (!chatId || !chatId[0] || !s_chatHist) return 0;
+    COMP_LOCK();
+    size_t c = 0;
+    for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+        if (s_chatHist[i].id[0] && strcmp(s_chatHist[i].id, chatId) == 0) {
+            c = s_chatHist[i].count;
+            break;
+        }
+    }
+    COMP_UNLOCK();
+    return c;
+}
+
+bool companionGetChatBubble(const char* chatId, size_t index, CompanionChatBubble* out) {
+    if (!chatId || !chatId[0] || !out || !s_chatHist) return false;
+    COMP_LOCK();
+    for (size_t i = 0; i < COMPANION_MAX_MESSAGES; ++i) {
+        if (s_chatHist[i].id[0] && strcmp(s_chatHist[i].id, chatId) == 0) {
+            if (index >= s_chatHist[i].count) {
+                COMP_UNLOCK();
+                return false;
+            }
+            *out = s_chatHist[i].bubbles[index];
+            COMP_UNLOCK();
+            return true;
+        }
+    }
+    COMP_UNLOCK();
+    return false;
+}
+
+const lv_img_dsc_t* companionGetAvatarImg(const char* chatId) {
+    if (!chatId || !chatId[0]) return nullptr;
+    COMP_LOCK();
+    const lv_img_dsc_t* res = nullptr;
+    for (size_t i = 0; i < COMPANION_MAX_AVATARS; ++i) {
+        if (s_avatars[i].valid && strcmp(s_avatars[i].id, chatId) == 0) {
+            res = &s_avatars[i].dsc;
+            break;
+        }
+    }
+    COMP_UNLOCK();
+    return res;
 }
 
 bool companionConsumeNewAlert(char* outSender, size_t senderCap, char* outPreview, size_t previewCap) {
@@ -958,6 +1418,7 @@ uint32_t companionSendReply(const char* notifId, const char* replyText) {
     s_replyState.status = CompanionReplyStatus::SENDING;
     copyStr(s_replyState.notifId, sizeof(s_replyState.notifId), notifId);
     s_replyState.detail[0] = '\0';
+    copyStr(s_pendingReplyText, sizeof(s_pendingReplyText), replyText);
     s_dataGen++;
     COMP_UNLOCK();
 

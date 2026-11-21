@@ -122,6 +122,10 @@ bool appManagerHasActiveApp() {
     return s_appWin != nullptr && !s_closing;
 }
 
+lv_obj_t* appManagerGetHeader() {
+    return s_appHeader;
+}
+
 void appManagerRefreshTheme() {
     if (!s_appWin) return;
     lv_obj_set_style_bg_color(s_appWin, lv_color_hex(m3CurrentBgHex()), 0);

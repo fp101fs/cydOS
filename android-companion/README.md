@@ -4,7 +4,7 @@ A lightweight, local-network-only Kotlin Android companion app that forwards **W
 
 - **No cloud, no account, no database server.**
 - **Local Wi-Fi only** with a 6-digit pairing token.
-- **Privacy-first**: message bodies are kept only in a small in-memory buffer (max 30 recent items on Android, 12 on CYD) and are never written to disk or logged to Logcat.
+- **Privacy-first**: message history is stored locally only (up to 30 recent chats in Android `SharedPreferences`, up to 8 persisted chats + recent bubbles in CYD ESP32 NVS flash) and is never sent to any cloud or logged to Logcat.
 
 ---
 
@@ -12,9 +12,9 @@ A lightweight, local-network-only Kotlin Android companion app that forwards **W
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| **Android Companion App** | `android-companion/` | Runs a Foreground Service + RFC 6455 WebSocket server (`:8765`), listens to WhatsApp notifications via `NotificationListenerService`, serves history, executes `RemoteInput` replies & dismissals, and advertises `_pixelcyd._tcp.` via NSD. |
-| **CYD Companion Driver** | `pixel-cyd/src/drivers/companion_mgr.{h,cpp}` | Background FreeRTOS task maintaining a non-blocking RFC 6455 WebSocket connection with reconnect backoff, heartbeat, NVS config persistence, and a 12-message local cache. |
-| **CYD WhatsApp App** | `pixel-cyd/src/apps/app_whatsapp.cpp` | Modular `REGISTER_APP_THEMED` LVGL app with Inbox, Message Detail + Reply composer (using `m3Keyboard`), Dismiss, and Setup screens. |
+| **Android Companion App** | `android-companion/` | Runs a Foreground Service + RFC 6455 WebSocket server (`:8765`), listens to WhatsApp notifications via `NotificationListenerService` (extracting `MessagingStyle` conversation bubbles and `24×24` RGB565 contact avatars), persists local history, executes `RemoteInput` replies & dismissals, and advertises `_pixelcyd._tcp.` via NSD. |
+| **CYD Companion Driver** | `pixel-cyd/src/drivers/companion_mgr.{h,cpp}` | Background FreeRTOS task maintaining a non-blocking RFC 6455 WebSocket connection with reconnect backoff, heartbeat, NVS config & chat persistence (`wachats`), per-chat bubble history, and on-demand avatar decoding. |
+| **CYD WhatsApp App** | `pixel-cyd/src/apps/app_whatsapp.cpp` | Modular `REGISTER_APP_THEMED_IMG` LVGL app mirroring WhatsApp Android: Chat List with circular profile avatars (or green WhatsApp icon fallback) & unread badges, Conversation View with incoming/outgoing bubbles & rounded composer, Setup screen, and black `?` help button in the title bar. |
 
 ---
 

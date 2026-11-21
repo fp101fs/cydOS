@@ -2,10 +2,14 @@ package com.pixelcyd.companion.store
 
 import android.app.Notification
 import android.content.Context
+import android.content.SharedPreferences
+import com.pixelcyd.companion.protocol.CompanionProtocol.ChatBubble
 import com.pixelcyd.companion.protocol.CompanionProtocol.WhatsAppMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 
@@ -32,8 +36,10 @@ object CompanionRepository {
     private const val PREFS_NAME = "pixel_cyd_companion"
     private const val KEY_TOKEN = "pairing_token"
     private const val KEY_FORWARDING = "forwarding_enabled"
+    private const val KEY_HISTORY = "wa_chat_history"
     private const val MAX_HISTORY = 30
 
+    private var appPrefs: android.content.SharedPreferences? = null
     private val lock = Any()
     private val history = ArrayDeque<WhatsAppMessage>(MAX_HISTORY)
     private val activeActions = ConcurrentHashMap<String, ReplyActionEntry>()
@@ -50,13 +56,16 @@ object CompanionRepository {
 
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appPrefs = prefs
         var token = prefs.getString(KEY_TOKEN, null)
         if (token.isNullOrBlank()) {
             token = generateToken()
             prefs.edit().putString(KEY_TOKEN, token).apply()
         }
         val forwarding = prefs.getBoolean(KEY_FORWARDING, true)
-        updateUi { it.copy(pairingToken = token, forwardingEnabled = forwarding) }
+        loadPersistedHistory(prefs)
+        val loadedCount = synchronized(lock) { history.size }
+        updateUi { it.copy(pairingToken = token, forwardingEnabled = forwarding, recentCount = loadedCount) }
     }
 
     fun regenerateToken(context: Context): String {
@@ -135,11 +144,18 @@ object CompanionRepository {
         activeActions[msg.id] = ReplyActionEntry(msg.sbnKey, replyAction)
 
         synchronized(lock) {
+            val existing = history.firstOrNull { it.id == msg.id }
+            val merged = if (msg.avatarRgb565B64 == null && existing?.avatarRgb565B64 != null) {
+                msg.copy(avatarRgb565B64 = existing.avatarRgb565B64)
+            } else {
+                msg
+            }
             history.removeAll { it.id == msg.id }
-            history.addFirst(msg)
+            history.addFirst(merged)
             while (history.size > MAX_HISTORY) {
                 history.removeLast()
             }
+            persistHistoryLocked()
         }
 
         updateUi {
@@ -167,13 +183,80 @@ object CompanionRepository {
         activeActions.remove(notifId)
         synchronized(lock) {
             history.removeAll { it.id == notifId }
+            persistHistoryLocked()
         }
         updateUi { it.copy(recentCount = synchronized(lock) { history.size }) }
     }
 
     fun clearHistory() {
-        synchronized(lock) { history.clear() }
+        synchronized(lock) {
+            history.clear()
+            persistHistoryLocked()
+        }
         updateUi { it.copy(recentCount = 0, lastEvent = "Cleared local history") }
+    }
+
+    private fun persistHistoryLocked() {
+        val prefs = appPrefs ?: return
+        try {
+            val arr = JSONArray()
+            for (item in history) {
+                val obj = item.toHistoryItemJson()
+                obj.put("sbnKey", item.sbnKey)
+                if (!item.avatarRgb565B64.isNullOrBlank()) {
+                    obj.put("avatar", item.avatarRgb565B64)
+                }
+                arr.put(obj)
+            }
+            prefs.edit().putString(KEY_HISTORY, arr.toString()).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun loadPersistedHistory(prefs: SharedPreferences) {
+        val raw = prefs.getString(KEY_HISTORY, null) ?: return
+        try {
+            val arr = JSONArray(raw)
+            synchronized(lock) {
+                history.clear()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id", "")
+                    if (id.isBlank()) continue
+                    val bubbles = ArrayList<ChatBubble>()
+                    val bArr = obj.optJSONArray("messages")
+                    if (bArr != null) {
+                        for (j in 0 until bArr.length()) {
+                            val bo = bArr.optJSONObject(j) ?: continue
+                            bubbles.add(
+                                ChatBubble(
+                                    sender = bo.optString("sender", ""),
+                                    text = bo.optString("text", ""),
+                                    time = bo.optString("time", ""),
+                                    outgoing = bo.optBoolean("outgoing", false)
+                                )
+                            )
+                        }
+                    }
+                    val av = obj.optString("avatar", "").ifBlank { null }
+                    history.addLast(
+                        WhatsAppMessage(
+                            id = id,
+                            sbnKey = obj.optString("sbnKey", ""),
+                            sender = obj.optString("sender", "WhatsApp"),
+                            conversation = obj.optString("conversation", "WhatsApp"),
+                            text = obj.optString("text", ""),
+                            timestampMs = obj.optLong("timestamp", 0L),
+                            canReply = false,
+                            messages = bubbles,
+                            avatarRgb565B64 = av
+                        )
+                    )
+                    if (history.size >= MAX_HISTORY) break
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun updateUi(transform: (CompanionUiState) -> CompanionUiState) {

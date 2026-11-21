@@ -11,6 +11,21 @@ object CompanionProtocol {
     const val DEFAULT_PORT = 8765
     const val MAX_INBOUND_BYTES = 8192
     const val MAX_REPLY_CHARS = 512
+    const val AVATAR_SIZE = 24
+
+    data class ChatBubble(
+        val sender: String,
+        val text: String,
+        val time: String,
+        val outgoing: Boolean = false
+    ) {
+        fun toJson(): JSONObject = JSONObject().apply {
+            put("sender", sender)
+            put("text", text)
+            put("time", time)
+            put("outgoing", outgoing)
+        }
+    }
 
     data class WhatsAppMessage(
         val id: String,
@@ -19,7 +34,9 @@ object CompanionProtocol {
         val conversation: String,
         val text: String,
         val timestampMs: Long,
-        val canReply: Boolean
+        val canReply: Boolean,
+        val messages: List<ChatBubble> = emptyList(),
+        val avatarRgb565B64: String? = null
     ) {
         fun formattedTime(): String {
             val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -36,6 +53,11 @@ object CompanionProtocol {
             put("timestamp", timestampMs)
             put("time", formattedTime())
             put("can_reply", canReply)
+            if (messages.isNotEmpty()) {
+                val arr = JSONArray()
+                for (m in messages) arr.put(m.toJson())
+                put("messages", arr)
+            }
         }
 
         fun toHistoryItemJson(): JSONObject = JSONObject().apply {
@@ -46,8 +68,23 @@ object CompanionProtocol {
             put("timestamp", timestampMs)
             put("time", formattedTime())
             put("can_reply", canReply)
+            if (messages.isNotEmpty()) {
+                val arr = JSONArray()
+                for (m in messages) arr.put(m.toJson())
+                put("messages", arr)
+            }
         }
     }
+
+    fun avatarFrame(id: String, rgb565B64: String): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "avatar")
+            put("id", id)
+            put("w", AVATAR_SIZE)
+            put("h", AVATAR_SIZE)
+            put("rgb565", rgb565B64)
+        }.toString()
 
     fun helloAck(ok: Boolean, forwardingEnabled: Boolean, error: String? = null): String =
         JSONObject().apply {

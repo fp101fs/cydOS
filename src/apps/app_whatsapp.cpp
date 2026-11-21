@@ -1,6 +1,7 @@
 #include "app_registry.h"
 #include "../assets/icon_whatsapp.h"
 #include "../theme/m3_theme.h"
+#include "../ui/app_manager.h"
 #include "../components/m3_widgets.h"
 #include "../components/m3_keyboard.h"
 #include "../components/m3_modal.h"
@@ -16,9 +17,10 @@ enum class WaView : uint8_t {
 };
 
 static lv_obj_t* s_body       = nullptr;
+static lv_obj_t* s_helpBtn    = nullptr;
+static lv_obj_t* s_chatScroll = nullptr;
 static lv_obj_t* s_replyTa    = nullptr;
 static lv_obj_t* s_sendBtn    = nullptr;
-static lv_obj_t* s_replyStLbl = nullptr;
 static lv_obj_t* s_hostTa     = nullptr;
 static lv_obj_t* s_portTa     = nullptr;
 static lv_obj_t* s_tokenTa    = nullptr;
@@ -29,10 +31,16 @@ static char               s_activeId[COMPANION_ID_MAX] = "";
 static uint32_t           s_lastGen     = 0;
 static CompanionConnState s_lastState   = CompanionConnState::UNCONFIGURED;
 static uint32_t           s_handledReq  = 0;
+static size_t             s_renderedBubbles = 0;
 
 static void renderInboxView();
 static void renderDetailView();
 static void renderSetupView();
+static void populateChatBubbles(const CompanionMessage& chat);
+
+// ============================================================================
+// WhatsApp Android Palette Helpers (Light & Dark)
+// ============================================================================
 
 static uint32_t waAccentHex() {
     return g_sys.lightMode ? 0x128C7E : 0x25D366;
@@ -40,6 +48,47 @@ static uint32_t waAccentHex() {
 
 static uint32_t waBtnFgHex() {
     return g_sys.lightMode ? 0xFFFFFF : 0x062A14;
+}
+
+static uint32_t waChatHeaderBgHex() {
+    return g_sys.lightMode ? 0x075E54 : 0x1F2C34;
+}
+
+static uint32_t waChatHeaderFgHex() {
+    return 0xFFFFFF;
+}
+
+static uint32_t waChatWallpaperHex() {
+    return g_sys.lightMode ? 0xECE5DD : 0x0B141A;
+}
+
+static uint32_t waBubbleInBgHex() {
+    return g_sys.lightMode ? 0xFFFFFF : 0x202C33;
+}
+
+static uint32_t waBubbleOutBgHex() {
+    return g_sys.lightMode ? 0xD9FDD3 : 0x005C4B;
+}
+
+static uint32_t waBubbleTextHex() {
+    return g_sys.lightMode ? 0x111B21 : 0xE9EDEF;
+}
+
+static uint32_t waBubbleTimeHex() {
+    return g_sys.lightMode ? 0x667781 : 0x8696A0;
+}
+
+static uint32_t waComposerBgHex() {
+    return g_sys.lightMode ? 0xFFFFFF : 0x2A3942;
+}
+
+static uint32_t waDividerHex() {
+    return g_sys.lightMode ? 0xE2E6EA : 0x232F36;
+}
+
+static uint32_t waHelpBtnBgHex() {
+    // Light neutral pill so the black "?" is crisp and readable in both light and dark modes
+    return g_sys.lightMode ? m3SurfaceHighHex() : 0xD7DFEC;
 }
 
 static uint32_t statusColorHex(CompanionConnState st) {
@@ -52,18 +101,20 @@ static uint32_t statusColorHex(CompanionConnState st) {
 }
 
 static void clearViewPtrs() {
+    s_chatScroll = nullptr;
     s_replyTa    = nullptr;
     s_sendBtn    = nullptr;
-    s_replyStLbl = nullptr;
     s_hostTa     = nullptr;
     s_portTa     = nullptr;
     s_tokenTa    = nullptr;
     s_setupStLbl = nullptr;
+    s_renderedBubbles = 0;
 }
 
 static void waDeleteCb(lv_event_t* e) {
     (void)e;
-    s_body = nullptr;
+    s_body    = nullptr;
+    s_helpBtn = nullptr;
     clearViewPtrs();
 }
 
@@ -81,66 +132,89 @@ static void styleTextarea(lv_obj_t* ta) {
     lv_obj_set_style_pad_ver(ta, 5, 0);
 }
 
-static void updateReplyStatusUi() {
-    if (!s_replyStLbl) return;
+static void styleComposerTextarea(lv_obj_t* ta) {
+    if (!ta) return;
+    lv_obj_set_style_bg_color(ta, lv_color_hex(waComposerBgHex()), 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(ta, lv_color_hex(waBubbleTextHex()), 0);
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_border_width(ta, 0, 0);
+    lv_obj_set_style_radius(ta, 15, 0);
+    lv_obj_set_style_pad_hor(ta, 10, 0);
+    lv_obj_set_style_pad_ver(ta, 6, 0);
+}
 
+// Creates a circular WhatsApp avatar: uses actual user profile image if available,
+// otherwise a circle container with the green WhatsApp icon.
+// Avoids clip_corner and lv_img_set_zoom to keep LVGL heap usage minimal on ESP32.
+static lv_obj_t* createWaAvatar(lv_obj_t* parent, const char* chatId, lv_coord_t sizePx) {
+    lv_obj_t* wrap = lv_obj_create(parent);
+    lv_obj_set_size(wrap, sizePx, sizePx);
+    lv_obj_set_style_radius(wrap, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(wrap, 0, 0);
+    lv_obj_set_style_pad_all(wrap, 0, 0);
+    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    const lv_img_dsc_t* photo = companionGetAvatarImg(chatId);
+    if (photo) {
+        lv_obj_set_style_bg_color(wrap, lv_color_hex(0x202C33), 0);
+        lv_obj_set_style_bg_opa(wrap, LV_OPA_COVER, 0);
+        lv_obj_t* img = lv_img_create(wrap);
+        lv_img_set_src(img, photo);
+        lv_obj_center(img);
+        lv_obj_clear_flag(img, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        // Fallback: circle container with green WhatsApp icon
+        lv_obj_set_style_bg_color(wrap, lv_color_hex(0x25D366), 0);
+        lv_obj_set_style_bg_opa(wrap, LV_OPA_COVER, 0);
+        lv_obj_t* ico = lv_img_create(wrap);
+        lv_img_set_src(ico, &s_iconWhatsapp24Img);
+        lv_obj_center(ico);
+        lv_obj_clear_flag(ico, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+    return wrap;
+}
+
+static void updateReplyStatusUi() {
     CompanionReplyState rs;
     companionGetReplyState(&rs);
 
     bool matchesActive = (rs.notifId[0] && strcmp(rs.notifId, s_activeId) == 0);
     if (!matchesActive || rs.status == CompanionReplyStatus::IDLE) {
-        lv_label_set_text(s_replyStLbl, companionIsConnected() ? "Ready to reply" : "Offline - connect to reply");
-        lv_obj_set_style_text_color(s_replyStLbl, lv_color_hex(m3TextSecondaryHex()), 0);
         if (s_sendBtn) lv_obj_clear_state(s_sendBtn, LV_STATE_DISABLED);
         return;
     }
 
     switch (rs.status) {
         case CompanionReplyStatus::SENDING:
-            lv_label_set_text(s_replyStLbl, "Sending reply...");
-            lv_obj_set_style_text_color(s_replyStLbl, lv_color_hex(M3Color::AMBER), 0);
             if (s_sendBtn) lv_obj_add_state(s_sendBtn, LV_STATE_DISABLED);
             break;
 
         case CompanionReplyStatus::SENT:
-            lv_label_set_text(s_replyStLbl, "Reply sent");
-            lv_obj_set_style_text_color(s_replyStLbl, lv_color_hex(waAccentHex()), 0);
             if (s_sendBtn) lv_obj_clear_state(s_sendBtn, LV_STATE_DISABLED);
             if (rs.reqId != s_handledReq) {
                 s_handledReq = rs.reqId;
                 if (s_replyTa) lv_textarea_set_text(s_replyTa, "");
-                m3ShowToast("WhatsApp reply sent", 1300);
+                m3ShowToast("Message sent", 1100);
             }
             break;
 
-        case CompanionReplyStatus::UNSUPPORTED: {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "Unsupported: %s",
-                     rs.detail[0] ? rs.detail : "No reply action");
-            lv_label_set_text(s_replyStLbl, buf);
-            lv_obj_set_style_text_color(s_replyStLbl, lv_color_hex(M3Color::AMBER), 0);
+        case CompanionReplyStatus::UNSUPPORTED:
             if (s_sendBtn) lv_obj_clear_state(s_sendBtn, LV_STATE_DISABLED);
             if (rs.reqId != s_handledReq) {
                 s_handledReq = rs.reqId;
                 m3ShowToast("Reply unavailable", 1500);
             }
             break;
-        }
 
         case CompanionReplyStatus::FAILED:
-        default: {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "Failed: %s",
-                     rs.detail[0] ? rs.detail : "Could not send");
-            lv_label_set_text(s_replyStLbl, buf);
-            lv_obj_set_style_text_color(s_replyStLbl, lv_color_hex(M3Color::CORAL), 0);
+        default:
             if (s_sendBtn) lv_obj_clear_state(s_sendBtn, LV_STATE_DISABLED);
             if (rs.reqId != s_handledReq) {
                 s_handledReq = rs.reqId;
-                m3ShowToast("Reply failed (text kept)", 1600);
+                m3ShowToast("Send failed (text kept)", 1600);
             }
             break;
-        }
     }
 }
 
@@ -186,7 +260,7 @@ static void syncBtnCb(lv_event_t* e) {
     }
     if (companionIsConnected()) {
         companionRequestHistory();
-        m3ShowToast("Syncing messages...", 1100);
+        m3ShowToast("Syncing chats...", 1100);
     } else {
         companionConnectNow();
         m3ShowToast("Reconnecting...", 1100);
@@ -221,7 +295,7 @@ static void triggerSendReply() {
     if (!s_replyTa || !s_activeId[0]) return;
     const char* txt = lv_textarea_get_text(s_replyTa);
     if (!txt || !txt[0]) {
-        m3ShowToast("Type a reply first", 1100);
+        m3ShowToast("Type a message first", 1100);
         return;
     }
     if (!companionIsConnected()) {
@@ -304,6 +378,40 @@ static void onSetupEnter(const char* txt) {
 }
 
 // ============================================================================
+// Title Bar "?" Button (Right Side, Black Text)
+// ============================================================================
+
+static void installHeaderHelpBtn() {
+    lv_obj_t* hdr = appManagerGetHeader();
+    if (!hdr || s_helpBtn) return;
+
+    s_helpBtn = lv_btn_create(hdr);
+    lv_obj_set_size(s_helpBtn, 30, 30);
+    lv_obj_align(s_helpBtn, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_radius(s_helpBtn, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_helpBtn, lv_color_hex(waHelpBtnBgHex()), 0);
+    lv_obj_set_style_bg_opa(s_helpBtn, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(s_helpBtn, 0, 0);
+    lv_obj_set_style_pad_all(s_helpBtn, 0, 0);
+    lv_obj_add_event_cb(s_helpBtn, openHelpModalCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* lbl = lv_label_create(s_helpBtn);
+    lv_label_set_text(lbl, "?");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
+    lv_obj_center(lbl);
+}
+
+static void refreshHeaderHelpBtnTheme() {
+    if (!s_helpBtn) return;
+    lv_obj_set_style_bg_color(s_helpBtn, lv_color_hex(waHelpBtnBgHex()), 0);
+    lv_obj_t* lbl = lv_obj_get_child(s_helpBtn, 0);
+    if (lbl) {
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
+    }
+}
+
+// ============================================================================
 // Views
 // ============================================================================
 
@@ -312,16 +420,18 @@ static void renderInboxView() {
     clearViewPtrs();
     lv_obj_clean(s_body);
 
+    lv_obj_set_style_pad_all(s_body, 0, 0);
     lv_obj_clear_flag(s_body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_body, 6, 0);
+    lv_obj_set_style_pad_row(s_body, 0, 0);
 
-    // Top bar: Connection status + Sync + Setup
+    // Compact connection bar (status + refresh + setup gear)
     lv_obj_t* topRow = lv_obj_create(s_body);
-    lv_obj_set_size(topRow, LV_PCT(100), 28);
+    lv_obj_set_size(topRow, LV_PCT(100), 32);
     lv_obj_set_style_bg_opa(topRow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(topRow, 0, 0);
-    lv_obj_set_style_pad_all(topRow, 0, 0);
+    lv_obj_set_style_pad_hor(topRow, 8, 0);
+    lv_obj_set_style_pad_ver(topRow, 3, 0);
     lv_obj_set_flex_flow(topRow, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(topRow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(topRow, 4, 0);
@@ -330,7 +440,7 @@ static void renderInboxView() {
     CompanionConnState st = companionGetState();
     uint8_t unread = companionUnreadCount();
 
-    lv_obj_t* stChip = m3Card(topRow, 0, 26, 13);
+    lv_obj_t* stChip = m3Card(topRow, 0, 24, 12);
     lv_obj_set_flex_grow(stChip, 1);
     lv_obj_set_style_pad_hor(stChip, 8, 0);
     lv_obj_set_style_pad_ver(stChip, 0, 0);
@@ -357,13 +467,20 @@ static void renderInboxView() {
     lv_obj_set_style_text_font(stLbl, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(stLbl, lv_color_hex(m3TextPrimaryHex()), 0);
 
-    lv_obj_t* syncBtn = m3PillBtn(topRow, LV_SYMBOL_REFRESH, m3SurfaceHighestHex(), m3TextPrimaryHex(), 32, 26);
+    lv_obj_t* syncBtn = m3PillBtn(topRow, LV_SYMBOL_REFRESH, m3SurfaceHighestHex(), m3TextPrimaryHex(), 30, 24);
     lv_obj_add_event_cb(syncBtn, syncBtnCb, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* cfgBtn = m3PillBtn(topRow, LV_SYMBOL_SETTINGS, waAccentHex(), waBtnFgHex(), 34, 26);
+    lv_obj_t* cfgBtn = m3PillBtn(topRow, LV_SYMBOL_SETTINGS, waAccentHex(), waBtnFgHex(), 32, 24);
     lv_obj_add_event_cb(cfgBtn, openSetupCb, LV_EVENT_CLICKED, nullptr);
 
-    // Message list container
+    // Subtle hairline under top strip
+    lv_obj_t* topDiv = lv_obj_create(s_body);
+    lv_obj_set_size(topDiv, LV_PCT(100), 1);
+    lv_obj_set_style_bg_color(topDiv, lv_color_hex(waDividerHex()), 0);
+    lv_obj_set_style_bg_opa(topDiv, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(topDiv, 0, 0);
+
+    // WhatsApp Chat List container
     lv_obj_t* listCont = lv_obj_create(s_body);
     lv_obj_set_width(listCont, LV_PCT(100));
     lv_obj_set_flex_grow(listCont, 1);
@@ -371,13 +488,20 @@ static void renderInboxView() {
     lv_obj_set_style_border_width(listCont, 0, 0);
     lv_obj_set_style_pad_all(listCont, 0, 0);
     lv_obj_set_flex_flow(listCont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(listCont, 6, 0);
+    lv_obj_set_style_pad_row(listCont, 0, 0);
     lv_obj_set_scroll_dir(listCont, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(listCont, LV_SCROLLBAR_MODE_AUTO);
 
     size_t count = companionGetMessageCount();
     if (count == 0) {
-        lv_obj_t* emptyCard = m3Card(listCont, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_t* padWrap = lv_obj_create(listCont);
+        lv_obj_set_size(padWrap, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(padWrap, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(padWrap, 0, 0);
+        lv_obj_set_style_pad_all(padWrap, 10, 0);
+        lv_obj_clear_flag(padWrap, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* emptyCard = m3Card(padWrap, LV_PCT(100), LV_SIZE_CONTENT, 14);
         lv_obj_set_style_pad_all(emptyCard, 12, 0);
         lv_obj_set_flex_flow(emptyCard, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(emptyCard, 6, 0);
@@ -408,80 +532,196 @@ static void renderInboxView() {
             lv_label_set_text(title, "Phone offline");
             lv_label_set_text(sub, err[0] ? err : "Open Pixel CYD Companion on your Android phone and tap refresh.");
         } else {
-            lv_label_set_text(title, "No WhatsApp messages");
-            lv_label_set_text(sub, "New WhatsApp notifications from your phone will appear here.");
+            lv_label_set_text(title, "No WhatsApp chats yet");
+            lv_label_set_text(sub, "Your WhatsApp chats will appear here as messages arrive on your phone.");
         }
-
-        // Big "?" help button just below the status / Link Android Companion card
-        lv_obj_t* helpWrap = lv_obj_create(listCont);
-        lv_obj_set_size(helpWrap, LV_PCT(100), 66);
-        lv_obj_set_style_bg_opa(helpWrap, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(helpWrap, 0, 0);
-        lv_obj_set_style_pad_all(helpWrap, 0, 0);
-        lv_obj_clear_flag(helpWrap, LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t* helpBtn = lv_btn_create(helpWrap);
-        lv_obj_set_size(helpBtn, 54, 54);
-        lv_obj_center(helpBtn);
-        lv_obj_set_style_radius(helpBtn, M3Dim::RADIUS_PILL, 0);
-        lv_obj_set_style_bg_color(helpBtn, lv_color_hex(waAccentHex()), 0);
-        lv_obj_set_style_bg_opa(helpBtn, LV_OPA_COVER, 0);
-        lv_obj_set_style_shadow_width(helpBtn, 8, 0);
-        lv_obj_set_style_shadow_opa(helpBtn, LV_OPA_30, 0);
-        lv_obj_set_style_shadow_ofs_y(helpBtn, 2, 0);
-        lv_obj_add_event_cb(helpBtn, openHelpModalCb, LV_EVENT_CLICKED, nullptr);
-
-        lv_obj_t* helpLbl = lv_label_create(helpBtn);
-        lv_label_set_text(helpLbl, "?");
-        lv_obj_set_style_text_font(helpLbl, &lv_font_montserrat_28, 0);
-        lv_obj_set_style_text_color(helpLbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_center(helpLbl);
         return;
     }
 
+    // WhatsApp Android-style Chat List rows
     for (size_t i = 0; i < count; ++i) {
         CompanionMessage msg;
         if (!companionGetMessage(i, &msg)) continue;
 
-        lv_obj_t* card = m3Card(listCont, LV_PCT(100), 48, 12);
-        lv_obj_set_style_pad_hor(card, 10, 0);
-        lv_obj_set_style_pad_ver(card, 6, 0);
-        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(card, openMsgCb, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
+        lv_obj_t* row = lv_obj_create(listCont);
+        lv_obj_set_size(row, LV_PCT(100), 52);
+        lv_obj_set_style_bg_color(row, lv_color_hex(m3CurrentBgHex()), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(m3SurfaceHighHex()), LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 10, 0);
+        lv_obj_set_style_pad_ver(row, 6, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(row, openMsgCb, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
 
-        lv_coord_t textLeft = msg.unread ? 11 : 0;
-        if (msg.unread) {
-            lv_obj_t* udot = lv_obj_create(card);
-            lv_obj_set_size(udot, 6, 6);
-            lv_obj_set_style_radius(udot, LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_bg_color(udot, lv_color_hex(waAccentHex()), 0);
-            lv_obj_set_style_bg_opa(udot, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(udot, 0, 0);
-            lv_obj_align(udot, LV_ALIGN_TOP_LEFT, 0, 4);
-        }
+        // Left: Circular profile avatar (photo or circle container with green WhatsApp icon)
+        lv_obj_t* avatar = createWaAvatar(row, msg.id, 38);
+        lv_obj_align(avatar, LV_ALIGN_LEFT_MID, 0, 0);
 
-        lv_obj_t* senderLbl = lv_label_create(card);
+        // Contact / Group name
+        lv_obj_t* senderLbl = lv_label_create(row);
         lv_label_set_text(senderLbl, msg.sender);
         lv_label_set_long_mode(senderLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(senderLbl, 146 - textLeft);
+        lv_obj_set_width(senderLbl, 134);
         lv_obj_set_style_text_font(senderLbl, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(senderLbl, lv_color_hex(m3TextPrimaryHex()), 0);
-        lv_obj_align(senderLbl, LV_ALIGN_TOP_LEFT, textLeft, 0);
+        lv_obj_align(senderLbl, LV_ALIGN_TOP_LEFT, 46, 3);
 
-        lv_obj_t* timeLbl = lv_label_create(card);
+        // Timestamp (top right, green when unread just like WhatsApp Android)
+        lv_obj_t* timeLbl = lv_label_create(row);
         lv_label_set_text(timeLbl, msg.timeStr[0] ? msg.timeStr : "");
         lv_obj_set_style_text_font(timeLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(timeLbl, lv_color_hex(msg.unread ? waAccentHex() : m3TextSecondaryHex()), 0);
-        lv_obj_align(timeLbl, LV_ALIGN_TOP_RIGHT, 0, 1);
+        lv_obj_align(timeLbl, LV_ALIGN_TOP_RIGHT, 0, 4);
 
-        lv_obj_t* prevLbl = lv_label_create(card);
-        lv_label_set_text(prevLbl, msg.text[0] ? msg.text : "(no preview)");
+        // Last message preview (bottom left)
+        bool hasBadge = msg.unread || (msg.unreadCount > 0);
+        char prevBuf[COMPANION_TEXT_MAX + 8];
+        if (msg.lastOutgoing && msg.text[0]) {
+            snprintf(prevBuf, sizeof(prevBuf), LV_SYMBOL_OK " %s", msg.text);
+        } else {
+            snprintf(prevBuf, sizeof(prevBuf), "%s", msg.text[0] ? msg.text : "(no preview)");
+        }
+        lv_obj_t* prevLbl = lv_label_create(row);
+        lv_label_set_text(prevLbl, prevBuf);
         lv_label_set_long_mode(prevLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(prevLbl, 196);
+        lv_obj_set_width(prevLbl, hasBadge ? 148 : 172);
         lv_obj_set_style_text_font(prevLbl, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(prevLbl, lv_color_hex(m3TextSecondaryHex()), 0);
-        lv_obj_align(prevLbl, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_align(prevLbl, LV_ALIGN_BOTTOM_LEFT, 46, -3);
+
+        // WhatsApp circular green unread count badge (bottom right)
+        if (hasBadge) {
+            uint8_t cnt = (msg.unreadCount > 0) ? msg.unreadCount : 1;
+            lv_obj_t* badge = lv_obj_create(row);
+            lv_obj_set_size(badge, cnt > 9 ? 20 : 16, 16);
+            lv_obj_set_style_radius(badge, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_color(badge, lv_color_hex(0x25D366), 0);
+            lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(badge, 0, 0);
+            lv_obj_set_style_pad_all(badge, 0, 0);
+            lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_align(badge, LV_ALIGN_BOTTOM_RIGHT, 0, -2);
+
+            char cntBuf[6];
+            snprintf(cntBuf, sizeof(cntBuf), "%u", (unsigned)cnt);
+            lv_obj_t* bLbl = lv_label_create(badge);
+            lv_label_set_text(bLbl, cntBuf);
+            lv_obj_set_style_text_font(bLbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(bLbl, lv_color_hex(g_sys.lightMode ? 0xFFFFFF : 0x062A14), 0);
+            lv_obj_center(bLbl);
+        }
+
+        // Subtle WhatsApp chat list divider (inset past avatar)
+        if (i + 1 < count) {
+            lv_obj_t* div = lv_obj_create(listCont);
+            lv_obj_set_size(div, LV_PCT(100), 1);
+            lv_obj_set_style_bg_color(div, lv_color_hex(waDividerHex()), 0);
+            lv_obj_set_style_bg_opa(div, LV_OPA_60, 0);
+            lv_obj_set_style_border_width(div, 0, 0);
+        }
     }
+}
+
+static void addChatBubble(lv_obj_t* parent, const char* chatTitle,
+                          const char* sender, const char* text,
+                          const char* timeStr, bool outgoing) {
+    // Full-width row wrapper to align bubble left (incoming) or right (outgoing)
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row,
+                          outgoing ? LV_FLEX_ALIGN_END : LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    // WhatsApp message bubble
+    lv_obj_t* bubble = lv_obj_create(row);
+    lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(bubble, 184, 0);
+    lv_obj_set_style_min_width(bubble, 62, 0);
+    lv_obj_set_style_bg_color(bubble, lv_color_hex(outgoing ? waBubbleOutBgHex() : waBubbleInBgHex()), 0);
+    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bubble, 0, 0);
+    lv_obj_set_style_radius(bubble, 10, 0);
+    lv_obj_set_style_pad_hor(bubble, 8, 0);
+    lv_obj_set_style_pad_ver(bubble, 5, 0);
+    lv_obj_set_style_shadow_width(bubble, g_sys.lightMode ? 2 : 0, 0);
+    lv_obj_set_style_shadow_opa(bubble, LV_OPA_10, 0);
+    lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(bubble, 2, 0);
+
+    // In group chats, show sender name at top of incoming bubble in WhatsApp accent green
+    if (!outgoing && sender && sender[0] && chatTitle && strcmp(sender, chatTitle) != 0) {
+        lv_obj_t* sLbl = lv_label_create(bubble);
+        lv_label_set_text(sLbl, sender);
+        lv_label_set_long_mode(sLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_max_width(sLbl, 166, 0);
+        lv_obj_set_style_text_font(sLbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(sLbl, lv_color_hex(waAccentHex()), 0);
+    }
+
+    // Message body text
+    lv_obj_t* tLbl = lv_label_create(bubble);
+    lv_label_set_text(tLbl, (text && text[0]) ? text : "(No message)");
+    lv_label_set_long_mode(tLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_max_width(tLbl, 166, 0);
+    lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(tLbl, lv_color_hex(waBubbleTextHex()), 0);
+
+    // Bottom-right meta row: timestamp (+ blue checkmark for outgoing)
+    lv_obj_t* meta = lv_obj_create(bubble);
+    lv_obj_set_size(meta, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(meta, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(meta, 0, 0);
+    lv_obj_set_style_pad_all(meta, 0, 0);
+    lv_obj_clear_flag(meta, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(meta, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(meta, 3, 0);
+
+    if (timeStr && timeStr[0]) {
+        lv_obj_t* tm = lv_label_create(meta);
+        lv_label_set_text(tm, timeStr);
+        lv_obj_set_style_text_font(tm, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(tm, lv_color_hex(waBubbleTimeHex()), 0);
+    }
+    if (outgoing) {
+        lv_obj_t* chk = lv_label_create(meta);
+        lv_label_set_text(chk, LV_SYMBOL_OK);
+        lv_obj_set_style_text_font(chk, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(chk, lv_color_hex(0x53BDEB), 0);
+    }
+}
+
+static void populateChatBubbles(const CompanionMessage& chat) {
+    if (!s_chatScroll) return;
+    lv_obj_clean(s_chatScroll);
+
+    size_t bCount = companionGetChatBubbleCount(chat.id);
+    if (bCount == 0) {
+        addChatBubble(s_chatScroll, chat.sender, chat.sender, chat.text, chat.timeStr, chat.lastOutgoing);
+        s_renderedBubbles = 1;
+    } else {
+        for (size_t i = 0; i < bCount; ++i) {
+            CompanionChatBubble b;
+            if (companionGetChatBubble(chat.id, i, &b)) {
+                addChatBubble(s_chatScroll, chat.sender, b.sender, b.text, b.timeStr, b.outgoing);
+            }
+        }
+        s_renderedBubbles = bCount;
+    }
+
+    // Scroll to newest message at the bottom (just like WhatsApp Android)
+    lv_obj_update_layout(s_chatScroll);
+    lv_obj_scroll_to_y(s_chatScroll, LV_COORD_MAX, LV_ANIM_OFF);
 }
 
 static void renderDetailView() {
@@ -496,93 +736,122 @@ static void renderDetailView() {
         return;
     }
 
+    lv_obj_set_style_pad_all(s_body, 0, 0);
     lv_obj_clear_flag(s_body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_body, 6, 0);
+    lv_obj_set_style_pad_row(s_body, 0, 0);
 
-    // Header row: Back + Sender + Time
+    // WhatsApp Android Chat Top Bar: < [Avatar] Contact Name [Dismiss]
     lv_obj_t* hdr = lv_obj_create(s_body);
-    lv_obj_set_size(hdr, LV_PCT(100), 28);
-    lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(hdr, LV_PCT(100), 34);
+    lv_obj_set_style_bg_color(hdr, lv_color_hex(waChatHeaderBgHex()), 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(hdr, 0, 0);
-    lv_obj_set_style_pad_all(hdr, 0, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    lv_obj_set_style_pad_hor(hdr, 6, 0);
+    lv_obj_set_style_pad_ver(hdr, 0, 0);
     lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hdr, 6, 0);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* backBtn = m3PillBtn(hdr, LV_SYMBOL_LEFT, m3SurfaceHighestHex(), m3TextPrimaryHex(), 34, 26);
+    lv_obj_t* backBtn = lv_btn_create(hdr);
+    lv_obj_set_size(backBtn, 26, 26);
+    lv_obj_set_style_bg_opa(backBtn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(backBtn, 0, 0);
+    lv_obj_set_style_pad_all(backBtn, 0, 0);
     lv_obj_add_event_cb(backBtn, backToInboxCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* backLbl = lv_label_create(backBtn);
+    lv_label_set_text(backLbl, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(backLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(backLbl, lv_color_hex(waChatHeaderFgHex()), 0);
+    lv_obj_center(backLbl);
+
+    createWaAvatar(hdr, msg.id, 26);
 
     lv_obj_t* nameLbl = lv_label_create(hdr);
     lv_label_set_text(nameLbl, msg.sender);
     lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
     lv_obj_set_flex_grow(nameLbl, 1);
     lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(nameLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_color(nameLbl, lv_color_hex(waChatHeaderFgHex()), 0);
 
-    if (msg.timeStr[0]) {
-        lv_obj_t* tLbl = lv_label_create(hdr);
-        lv_label_set_text(tLbl, msg.timeStr);
-        lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_color(tLbl, lv_color_hex(m3TextSecondaryHex()), 0);
-    }
+    lv_obj_t* disBtn = lv_btn_create(hdr);
+    lv_obj_set_size(disBtn, 26, 26);
+    lv_obj_set_style_bg_opa(disBtn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(disBtn, 0, 0);
+    lv_obj_set_style_pad_all(disBtn, 0, 0);
+    lv_obj_add_event_cb(disBtn, dismissBtnCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* disLbl = lv_label_create(disBtn);
+    lv_label_set_text(disLbl, LV_SYMBOL_TRASH);
+    lv_obj_set_style_text_font(disLbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(disLbl, lv_color_hex(waChatHeaderFgHex()), 0);
+    lv_obj_set_style_text_opa(disLbl, LV_OPA_80, 0);
+    lv_obj_center(disLbl);
 
-    // Message preview card (scrollable for longer previews)
-    lv_obj_t* msgCard = m3Card(s_body, LV_PCT(100), 68, 12);
-    lv_obj_set_flex_grow(msgCard, 1);
-    lv_obj_set_style_pad_all(msgCard, 10, 0);
-    lv_obj_add_flag(msgCard, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(msgCard, LV_DIR_VER);
+    // WhatsApp Chat Wallpaper & Scrollable Bubbles Area
+    s_chatScroll = lv_obj_create(s_body);
+    lv_obj_set_width(s_chatScroll, LV_PCT(100));
+    lv_obj_set_flex_grow(s_chatScroll, 1);
+    lv_obj_set_style_bg_color(s_chatScroll, lv_color_hex(waChatWallpaperHex()), 0);
+    lv_obj_set_style_bg_opa(s_chatScroll, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_chatScroll, 0, 0);
+    lv_obj_set_style_radius(s_chatScroll, 0, 0);
+    lv_obj_set_style_pad_hor(s_chatScroll, 8, 0);
+    lv_obj_set_style_pad_ver(s_chatScroll, 6, 0);
+    lv_obj_set_flex_flow(s_chatScroll, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_chatScroll, 5, 0);
+    lv_obj_set_scroll_dir(s_chatScroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_chatScroll, LV_SCROLLBAR_MODE_AUTO);
 
-    lv_obj_t* bodyLbl = lv_label_create(msgCard);
-    lv_label_set_text(bodyLbl, msg.text[0] ? msg.text : "(No message preview)");
-    lv_label_set_long_mode(bodyLbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(bodyLbl, LV_PCT(100));
-    lv_obj_set_style_text_font(bodyLbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(bodyLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    populateChatBubbles(msg);
+
+    // WhatsApp Android Bottom Composer Bar
+    lv_obj_t* compBar = lv_obj_create(s_body);
+    lv_obj_set_size(compBar, LV_PCT(100), 38);
+    lv_obj_set_style_bg_color(compBar, lv_color_hex(waChatWallpaperHex()), 0);
+    lv_obj_set_style_bg_opa(compBar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(compBar, 0, 0);
+    lv_obj_set_style_radius(compBar, 0, 0);
+    lv_obj_set_style_pad_hor(compBar, 6, 0);
+    lv_obj_set_style_pad_ver(compBar, 4, 0);
+    lv_obj_set_flex_flow(compBar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(compBar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(compBar, 6, 0);
+    lv_obj_clear_flag(compBar, LV_OBJ_FLAG_SCROLLABLE);
 
     if (msg.canReply) {
-        s_replyTa = lv_textarea_create(s_body);
-        lv_obj_set_size(s_replyTa, LV_PCT(100), 34);
+        s_replyTa = lv_textarea_create(compBar);
+        lv_obj_set_height(s_replyTa, 30);
+        lv_obj_set_flex_grow(s_replyTa, 1);
         lv_textarea_set_one_line(s_replyTa, true);
         lv_textarea_set_max_length(s_replyTa, 180);
-        lv_textarea_set_placeholder_text(s_replyTa, "Type WhatsApp reply...");
-        styleTextarea(s_replyTa);
+        lv_textarea_set_placeholder_text(s_replyTa, "Message");
+        styleComposerTextarea(s_replyTa);
         m3KeyboardAttach(s_replyTa, onReplyEnter);
 
-        s_replyStLbl = lv_label_create(s_body);
-        lv_obj_set_width(s_replyStLbl, LV_PCT(100));
-        lv_label_set_long_mode(s_replyStLbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_style_text_font(s_replyStLbl, &lv_font_montserrat_10, 0);
-
-        lv_obj_t* bar = lv_obj_create(s_body);
-        lv_obj_set_size(bar, LV_PCT(100), 30);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_set_style_pad_all(bar, 0, 0);
-        lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_column(bar, 6, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-
-        s_sendBtn = m3PillBtn(bar, LV_SYMBOL_OK " Send", waAccentHex(), waBtnFgHex(), 0, 30);
-        lv_obj_set_flex_grow(s_sendBtn, 1);
+        // Circular green WhatsApp Send button
+        s_sendBtn = lv_btn_create(compBar);
+        lv_obj_set_size(s_sendBtn, 30, 30);
+        lv_obj_set_style_radius(s_sendBtn, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_sendBtn, lv_color_hex(0x00A884), 0);
+        lv_obj_set_style_bg_opa(s_sendBtn, LV_OPA_COVER, 0);
+        lv_obj_set_style_shadow_width(s_sendBtn, 0, 0);
+        lv_obj_set_style_pad_all(s_sendBtn, 0, 0);
         lv_obj_add_event_cb(s_sendBtn, sendBtnCb, LV_EVENT_CLICKED, nullptr);
 
-        lv_obj_t* disBtn = m3PillBtn(bar, LV_SYMBOL_CLOSE " Dismiss", m3SurfaceHighestHex(), m3TextPrimaryHex(), 84, 30);
-        lv_obj_add_event_cb(disBtn, dismissBtnCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* sendIco = lv_label_create(s_sendBtn);
+        lv_label_set_text(sendIco, LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_font(sendIco, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(sendIco, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(sendIco);
 
         updateReplyStatusUi();
     } else {
-        lv_obj_t* noteLbl = lv_label_create(s_body);
-        lv_label_set_text(noteLbl, "Reply unavailable for this notification");
-        lv_label_set_long_mode(noteLbl, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(noteLbl, LV_PCT(100));
+        lv_obj_t* noteLbl = lv_label_create(compBar);
+        lv_label_set_text(noteLbl, "Reply unavailable for this chat");
         lv_obj_set_style_text_font(noteLbl, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_color(noteLbl, lv_color_hex(M3Color::AMBER), 0);
-
-        lv_obj_t* disBtn = m3PillBtn(s_body, LV_SYMBOL_CLOSE " Dismiss on Phone", m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 30);
-        lv_obj_add_event_cb(disBtn, dismissBtnCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_set_style_text_color(noteLbl, lv_color_hex(waBubbleTimeHex()), 0);
     }
 }
 
@@ -591,6 +860,7 @@ static void renderSetupView() {
     clearViewPtrs();
     lv_obj_clean(s_body);
 
+    lv_obj_set_style_pad_all(s_body, M3Dim::PAD_MD, 0);
     lv_obj_clear_flag(s_body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_body, 5, 0);
@@ -682,7 +952,7 @@ static void renderSetupView() {
     lv_obj_set_style_text_font(s_setupStLbl, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(s_setupStLbl, lv_color_hex(m3TextSecondaryHex()), 0);
 
-    // Buttons: Back | Connect | Disc.
+    // Buttons: Back | Connect | Off
     lv_obj_t* bar = lv_obj_create(s_body);
     lv_obj_set_size(bar, LV_PCT(100), 30);
     lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
@@ -720,6 +990,13 @@ static void tickAppWhatsapp() {
         renderInboxView();
     } else if (s_view == WaView::DETAIL) {
         updateReplyStatusUi();
+        CompanionMessage chat;
+        if (companionFindMessageById(s_activeId, &chat)) {
+            size_t bCount = companionGetChatBubbleCount(s_activeId);
+            if (bCount != s_renderedBubbles) {
+                populateChatBubbles(chat);
+            }
+        }
     } else if (s_view == WaView::SETUP && s_setupStLbl) {
         char info[96];
         char err[COMPANION_DETAIL_MAX];
@@ -735,11 +1012,12 @@ static void tickAppWhatsapp() {
 
 static void refreshAppWhatsappTheme() {
     if (!s_body) return;
+    refreshHeaderHelpBtnTheme();
     if (s_view == WaView::INBOX) {
         renderInboxView();
     } else if (s_view == WaView::DETAIL) {
-        // Re-skin textarea in place to preserve unsaved reply text
-        styleTextarea(s_replyTa);
+        // Re-skin composer in place to preserve unsaved reply text
+        styleComposerTextarea(s_replyTa);
     } else if (s_view == WaView::SETUP) {
         styleTextarea(s_hostTa);
         styleTextarea(s_portTa);
@@ -749,6 +1027,7 @@ static void refreshAppWhatsappTheme() {
 
 static void buildAppWhatsapp(lv_obj_t* body) {
     s_body = body;
+    s_helpBtn = nullptr;
     s_view = WaView::INBOX;
     s_activeId[0] = '\0';
     s_lastGen = companionGetDataGen();
@@ -756,6 +1035,7 @@ static void buildAppWhatsapp(lv_obj_t* body) {
     s_handledReq = 0;
     clearViewPtrs();
     lv_obj_add_event_cb(body, waDeleteCb, LV_EVENT_DELETE, nullptr);
+    installHeaderHelpBtn();
     renderInboxView();
 }
 

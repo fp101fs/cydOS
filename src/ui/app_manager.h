@@ -8,5 +8,6 @@ void appManagerLaunch(const AppMeta* meta);
 void appManagerLaunchById(const char* id);
 void appManagerClose();
 bool appManagerHasActiveApp();
+lv_obj_t* appManagerGetHeader();
 void appManagerRefreshTheme();
 void appManagerLoop();

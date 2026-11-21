@@ -16,7 +16,7 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
   - **HTTP/HTTPS Text Browser (`app_browser.cpp`, `http_reader`)**: Async FreeRTOS worker fetching real web pages over Wi-Fi (`HTTPClient` / `WiFiClientSecure`) with redirect following, streaming HTML-to-text extraction, and working bookmarks.
   - **Persistent Notes (`app_notes.cpp`, `notes_store`)**: Up to 8 notes persisted in ESP32 NVS (`Preferences`) across reboots, plus optional hot-plug microSD export/import (`/pixel_notes.txt` on VSPI).
   - **Bluetooth BLE Scanner (`app_bluetooth.cpp`, `ble_mgr`)**: Scanner-only `NimBLE-Arduino` integration displaying nearby BLE device names, uppercase MAC addresses, and RSSI with lazy init for heap efficiency.
-  - **WhatsApp Companion (`app_whatsapp.cpp`, `companion_mgr`)**: Local-Wi-Fi RFC 6455 WebSocket bridge to the Android companion app (`android-companion/`) for live WhatsApp notification previews, unread badge, quick replies via Android `RemoteInput`, notification dismissal, Ping/Pong keepalive, and a built-in `?` multi-step setup guide modal.
+  - **WhatsApp Companion (`app_whatsapp.cpp`, `companion_mgr`)**: Local-Wi-Fi RFC 6455 WebSocket bridge to the Android companion app (`android-companion/`) with a WhatsApp Android-style **Chat List** (24×24 profile avatars streamed from Android with circular green WhatsApp icon fallback, unread count badges, timestamps) and **Conversation View** (WhatsApp chat header, wallpaper, incoming/outgoing chat bubbles with blue checkmarks, rounded message composer + circular send button), NVS flash persistence across reboots, quick replies via Android `RemoteInput`, notification dismissal, Ping/Pong keepalive, and a black `?` setup guide button in the right side of the app title bar.
   - **Android Link (`app_android_link.cpp`)**: One-tap QR setup app using LVGL `lv_qrcode` — Step 1 shows a direct APK download QR (`releases/latest/download/pixel-cyd-companion.apk`) with an install-help `?` modal; Step 2 starts a temporary local pairing endpoint (`:8766`) and displays a Pairing QR scanned directly inside the Android Companion app for zero-typing setup.
 - **Visual-Limits Benchmark Apps**:
   - **SqLine Lab (`app_sqline_limits.cpp`)**: SquareLine Studio visual-limits showcase (gradients, dual radial arcs, glassmorphic alpha slider, animated line chart, font scaling, 12-widget Stress Arena, live FPS & free-heap HUD).
@@ -33,8 +33,8 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
 ## Memory & Flash Footprint (`huge_app.csv`, 3 MB app partition)
 | Target | RAM (Static) | Flash Used | Flash Free |
 | --- | --- | --- | --- |
-| `cyd2usb` (ST7789) | ~31.0% (~101.7 KB / 320 KB) | ~52.7% (~1.66 MB / 3.15 MB) | ~47.3% (~1.49 MB) |
-| `cyd` (ILI9341) | ~31.0% (~101.7 KB / 320 KB) | ~52.7% (~1.66 MB / 3.15 MB) | ~47.3% (~1.49 MB) |
+| `cyd2usb` (ST7789) | ~29.3% (~96.1 KB / 320 KB) | ~53.1% (~1.67 MB / 3.15 MB) | ~46.9% (~1.48 MB) |
+| `cyd` (ILI9341) | ~29.3% (~96.1 KB / 320 KB) | ~53.1% (~1.67 MB / 3.15 MB) | ~46.9% (~1.48 MB) |
 
 ## Build & Flash
 ```bash

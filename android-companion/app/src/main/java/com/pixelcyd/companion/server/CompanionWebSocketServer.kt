@@ -87,6 +87,15 @@ class CompanionWebSocketServer(
                 val limit = doc.optInt("limit", 12).coerceIn(1, 30)
                 val items = CompanionRepository.getRecentHistory(limit)
                 conn.send(CompanionProtocol.historyResponse(items))
+                for (item in items) {
+                    val av = item.avatarRgb565B64
+                    if (!av.isNullOrBlank()) {
+                        try {
+                            conn.send(CompanionProtocol.avatarFrame(item.id, av))
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
             }
             "reply_request" -> handleReplyRequest(conn, doc)
             "dismiss_request" -> handleDismissRequest(conn, doc)
@@ -159,6 +168,10 @@ class CompanionWebSocketServer(
     fun broadcastNotification(msg: CompanionProtocol.WhatsAppMessage) {
         val payload = msg.toNotificationJson().toString()
         broadcastToAuthenticated(payload)
+        val av = msg.avatarRgb565B64
+        if (!av.isNullOrBlank()) {
+            broadcastToAuthenticated(CompanionProtocol.avatarFrame(msg.id, av))
+        }
     }
 
     fun broadcastStatus() {
