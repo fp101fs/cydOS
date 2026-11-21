@@ -36,9 +36,12 @@ void appManagerInit() {
     s_closing = false;
 }
 
-void appManagerLaunch(AppId id) {
-    const AppMeta* meta = appGetMeta(id);
-    if (!meta || !meta->buildFn) return;
+void appManagerLaunch(const AppMeta* meta) {
+    if (!meta) return;
+    if (!meta->buildFn) {
+        if (meta->actionFn) meta->actionFn();
+        return;
+    }
 
     if (m3KeyboardIsOpen()) m3KeyboardHide();
 
@@ -86,6 +89,10 @@ void appManagerLaunch(AppId id) {
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
     lv_anim_set_exec_cb(&a, animYCb);
     lv_anim_start(&a);
+}
+
+void appManagerLaunchById(const char* id) {
+    appManagerLaunch(appFindById(id));
 }
 
 void appManagerClose() {

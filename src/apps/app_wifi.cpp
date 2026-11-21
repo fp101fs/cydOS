@@ -74,3 +74,5 @@ void buildAppWifi(lv_obj_t* body) {
         lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 24, 2);
     }
 }
+
+REGISTER_APP(wifi, "wifi", "Wi-Fi", LV_SYMBOL_WIFI, 0x8AB4F8, 0x1A3252, buildAppWifi, nullptr, 40);

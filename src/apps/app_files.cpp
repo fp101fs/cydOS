@@ -98,3 +98,5 @@ void buildAppFiles(lv_obj_t* body) {
     lv_obj_set_style_pad_row(body, 6, 0);
     renderFiles();
 }
+
+REGISTER_APP(files, "files", "Files", LV_SYMBOL_DIRECTORY, 0xFDD663, 0x453917, buildAppFiles, nullptr, 10);

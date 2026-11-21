@@ -40,8 +40,9 @@ void setup() {
     quickSettingsInit();
 
     s_lastMinute = g_sys.minute;
-    Serial.printf("[BOOT] Ready %ux%u, Free Heap: %lu B\n",
+    Serial.printf("[BOOT] Ready %ux%u, Apps: %u, Free Heap: %lu B\n",
                   displayWidth(), displayHeight(),
+                  (unsigned)appGetCount(),
                   (unsigned long)ESP.getFreeHeap());
 }
 

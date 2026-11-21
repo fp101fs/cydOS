@@ -4,7 +4,8 @@
 #include <lvgl.h>
 
 void appManagerInit();
-void appManagerLaunch(AppId id);
+void appManagerLaunch(const AppMeta* meta);
+void appManagerLaunchById(const char* id);
 void appManagerClose();
 bool appManagerHasActiveApp();
 void appManagerLoop();

@@ -54,3 +54,5 @@ void buildAppSettings(lv_obj_t* body) {
     lv_obj_t* calBtn = m3PillBtn(body, "Recalibrate Touch", M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 38);
     lv_obj_add_event_cb(calBtn, calBtnCb, LV_EVENT_CLICKED, nullptr);
 }
+
+REGISTER_APP(settings, "settings", "Settings", LV_SYMBOL_SETTINGS, 0x8AB4F8, 0x1D3557, buildAppSettings, nullptr, 120);

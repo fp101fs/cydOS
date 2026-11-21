@@ -3,32 +3,34 @@
 #include <lvgl.h>
 #include <stdint.h>
 
-enum AppId : uint8_t {
-    APP_SETTINGS = 0,
-    APP_THEME,
-    APP_MUSIC,
-    APP_FILES,
-    APP_GALLERY,
-    APP_BROWSER,
-    APP_TERMINAL,
-    APP_WIFI,
-    APP_BLUETOOTH,
-    APP_SYSINFO,
-    APP_CALCULATOR,
-    APP_NOTES,
-    APP_ABOUT,
-    APP_CLOCK,
-    APP_COUNT
-};
+constexpr uint8_t APP_MAX_COUNT = 32;
 
 struct AppMeta {
-    AppId id;
+    const char* id;
     const char* name;
     const char* icon;
     uint32_t accentHex;
     uint32_t containerHex;
     void (*buildFn)(lv_obj_t* body);
     void (*tickFn)();
+    int16_t order;
+    void (*actionFn)();
 };
 
-const AppMeta* appGetMeta(AppId id);
+struct AppRegistrar {
+    explicit AppRegistrar(const AppMeta* meta);
+};
+
+void appRegister(const AppMeta* meta);
+uint8_t appGetCount();
+const AppMeta* appGetAt(uint8_t index);
+const AppMeta* appFindById(const char* id);
+
+#define REGISTER_APP_EX(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord, action) \
+    static const AppMeta s_appMeta_##varId = {                                                        \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, action                          \
+    };                                                                                                \
+    static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)
+
+#define REGISTER_APP(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord) \
+    REGISTER_APP_EX(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr)

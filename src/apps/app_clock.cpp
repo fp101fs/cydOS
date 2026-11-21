@@ -54,3 +54,5 @@ void tickAppClock() {
         refreshClock();
     }
 }
+
+REGISTER_APP(clock, "clock", "Clock", LV_SYMBOL_BELL, 0x8AB4F8, 0x1D3557, buildAppClock, tickAppClock, 140);

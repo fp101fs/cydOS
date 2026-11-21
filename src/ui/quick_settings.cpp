@@ -134,7 +134,7 @@ static void settingsGearCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
     quickSettingsClose();
-    appManagerLaunch(APP_SETTINGS);
+    appManagerLaunchById("settings");
 }
 
 static void shadeDragCb(lv_event_t* e) {

@@ -65,9 +65,9 @@ static void menuItemCb(lv_event_t* e) {
         m3ApplyThemeAll();
         m3ShowToast(g_sys.lightMode ? "Light Mode" : "Dark Mode", 1100);
     } else if (act == 2) {
-        appManagerLaunch(APP_SETTINGS);
+        appManagerLaunchById("settings");
     } else if (act == 3) {
-        appManagerLaunch(APP_SYSINFO);
+        appManagerLaunchById("sysinfo");
     } else if (act == 4) {
         if (appManagerHasActiveApp()) appManagerClose();
     }

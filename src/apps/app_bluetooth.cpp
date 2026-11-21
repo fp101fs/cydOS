@@ -66,3 +66,5 @@ void buildAppBluetooth(lv_obj_t* body) {
         lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 24, 1);
     }
 }
+
+REGISTER_APP(bluetooth, "bluetooth", "Bluetooth", LV_SYMBOL_BLUETOOTH, 0xC5B4E3, 0x362B4E, buildAppBluetooth, nullptr, 50);

@@ -100,3 +100,5 @@ void buildAppGallery(lv_obj_t* body) {
     s_selected = -1;
     renderGallery();
 }
+
+REGISTER_APP(gallery, "gallery", "Gallery", LV_SYMBOL_IMAGE, 0x81C995, 0x1B4332, buildAppGallery, nullptr, 20);

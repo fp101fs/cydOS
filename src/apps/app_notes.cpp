@@ -40,3 +40,5 @@ void buildAppNotes(lv_obj_t* body) {
     lv_obj_add_event_cb(s_ta, taChangeCb, LV_EVENT_VALUE_CHANGED, nullptr);
     m3KeyboardAttach(s_ta, onNoteEnter);
 }
+
+REGISTER_APP(notes, "notes", "Notes", LV_SYMBOL_EDIT, 0xFDD663, 0x423819, buildAppNotes, nullptr, 110);

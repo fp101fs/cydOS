@@ -90,3 +90,5 @@ void buildAppBrowser(lv_obj_t* body) {
     lv_obj_set_style_text_font(s_pageBody, &lv_font_montserrat_12, 0);
     lv_obj_align(s_pageBody, LV_ALIGN_TOP_LEFT, 0, 24);
 }
+
+REGISTER_APP(browser, "browser", "Browser", LV_SYMBOL_GPS, 0x78D9EC, 0x173F49, buildAppBrowser, nullptr, 90);

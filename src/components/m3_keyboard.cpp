@@ -73,7 +73,7 @@ static void keyClickCb(lv_event_t* e) {
             return;
         } else if (c == 1) {
             m3KeyboardHide();
-            appManagerLaunch(APP_SETTINGS);
+            appManagerLaunchById("settings");
             return;
         } else if (c == 2) {
             if (s_targetTa) lv_textarea_add_text(s_targetTa, ":)");

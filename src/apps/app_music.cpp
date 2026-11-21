@@ -141,3 +141,5 @@ void tickAppMusic() {
         refreshMusicUi();
     }
 }
+
+REGISTER_APP(music, "music", "Music", LV_SYMBOL_AUDIO, 0xF28B82, 0x4A2226, buildAppMusic, tickAppMusic, 100);

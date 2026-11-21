@@ -119,3 +119,5 @@ void buildAppCalculator(lv_obj_t* body) {
 
     lv_obj_add_event_cb(bm, calcBtnCb, LV_EVENT_VALUE_CHANGED, nullptr);
 }
+
+REGISTER_APP(calculator, "calculator", "Calc", LV_SYMBOL_PLUS, 0xC5B4E3, 0x3A2F52, buildAppCalculator, nullptr, 70);

@@ -68,3 +68,5 @@ void buildAppTerminal(lv_obj_t* body) {
         lv_obj_add_event_cb(b, runCmdCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
 }
+
+REGISTER_APP(terminal, "terminal", "Terminal", LV_SYMBOL_KEYBOARD, 0xA8DAB5, 0x1C3B28, buildAppTerminal, nullptr, 30);
