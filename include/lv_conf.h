@@ -15,10 +15,14 @@
 #define LV_COLOR_MIX_ROUND_OFS 128
 #define LV_COLOR_CHROMA_KEY lv_color_hex(0x00ff00)
 
-/* Memory settings: 56 KB dedicated pool for LVGL objects & styles */
-#define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (56U * 1024U)
-#define LV_MEM_ADR 0
+/* Memory settings: use ESP32 dynamic heap (~265 KB available) */
+#define LV_MEM_CUSTOM 1
+#if LV_MEM_CUSTOM == 1
+    #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>
+    #define LV_MEM_CUSTOM_ALLOC   malloc
+    #define LV_MEM_CUSTOM_FREE    free
+    #define LV_MEM_CUSTOM_REALLOC realloc
+#endif
 #define LV_MEM_BUF_MAX_NUM 16
 #define LV_MEMCPY_MEMSET_STD 1
 

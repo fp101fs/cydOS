@@ -11,8 +11,10 @@ static M3KbdEnterCb s_onEnter = nullptr;
 
 static bool s_shift = true;
 static bool s_symMode = false;
+static bool s_stylesInited = false;
+static lv_style_t s_keyStyle;
+static lv_style_t s_keyLblStyle;
 
-static lv_obj_t* s_keys[4][10] = {};
 static lv_obj_t* s_keyLbls[4][10] = {};
 static uint8_t s_rowLens[4] = { 10, 9, 9, 6 };
 
@@ -102,8 +104,34 @@ static void keyClickCb(lv_event_t* e) {
     }
 }
 
+static lv_obj_t* addKey(lv_obj_t* parent, int r, int c, int16_t x, int16_t y, int16_t w, int16_t h, const lv_font_t* font) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_size(btn, w, h);
+    lv_obj_add_style(btn, &s_keyStyle, 0);
+    lv_obj_add_event_cb(btn, keyClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)((r << 8) | c));
+
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_obj_add_style(lbl, &s_keyLblStyle, 0);
+    lv_obj_set_style_text_font(lbl, font, 0);
+    lv_obj_center(lbl);
+    s_keyLbls[r][c] = lbl;
+    return btn;
+}
+
 void m3KeyboardInit() {
     if (s_kbd) return;
+
+    if (!s_stylesInited) {
+        lv_style_init(&s_keyStyle);
+        lv_style_set_radius(&s_keyStyle, 6);
+        lv_style_set_shadow_width(&s_keyStyle, 0);
+        lv_style_set_pad_all(&s_keyStyle, 0);
+        lv_style_set_bg_opa(&s_keyStyle, LV_OPA_COVER);
+
+        lv_style_init(&s_keyLblStyle);
+        s_stylesInited = true;
+    }
 
     uint16_t w = displayWidth();
     uint16_t h = displayHeight();
@@ -122,81 +150,26 @@ void m3KeyboardInit() {
     const int16_t rowY[4] = { 5, 38, 71, 104 };
     const int16_t keyH = 29;
 
-    // Row 0: 10 keys
     for (int c = 0; c < 10; ++c) {
-        int16_t x = 6 + c * 23;
-        lv_obj_t* btn = lv_btn_create(s_kbd);
-        lv_obj_set_pos(btn, x, rowY[0]);
-        lv_obj_set_size(btn, 21, keyH);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_add_event_cb(btn, keyClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)((0 << 8) | c));
-        s_keys[0][c] = btn;
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_center(lbl);
-        s_keyLbls[0][c] = lbl;
+        addKey(s_kbd, 0, c, 6 + c * 23, rowY[0], 21, keyH, &lv_font_montserrat_14);
     }
-
-    // Row 1: 9 keys centered
     for (int c = 0; c < 9; ++c) {
-        int16_t x = 14 + c * 24;
-        lv_obj_t* btn = lv_btn_create(s_kbd);
-        lv_obj_set_pos(btn, x, rowY[1]);
-        lv_obj_set_size(btn, 21, keyH);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_add_event_cb(btn, keyClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)((1 << 8) | c));
-        s_keys[1][c] = btn;
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_center(lbl);
-        s_keyLbls[1][c] = lbl;
+        addKey(s_kbd, 1, c, 14 + c * 24, rowY[1], 21, keyH, &lv_font_montserrat_14);
     }
 
-    // Row 2: Shift + 7 letters + Backspace
     int16_t r2x = 6;
     for (int c = 0; c < 9; ++c) {
         int16_t kw = (c == 0 || c == 8) ? 31 : 21;
-        lv_obj_t* btn = lv_btn_create(s_kbd);
-        lv_obj_set_pos(btn, r2x, rowY[2]);
-        lv_obj_set_size(btn, kw, keyH);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_add_event_cb(btn, keyClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)((2 << 8) | c));
-        s_keys[2][c] = btn;
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_obj_set_style_text_font(lbl, (c == 0 || c == 8) ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
-        lv_obj_center(lbl);
-        s_keyLbls[2][c] = lbl;
+        addKey(s_kbd, 2, c, r2x, rowY[2], kw, keyH, (c == 0 || c == 8) ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
         r2x += kw + 2;
     }
 
-    // Row 3: 123, Gear, Emoji, Space, Dot, Enter
     const int16_t r3w[6] = { 32, 26, 26, 78, 24, 34 };
     const char* r3txt[6] = { "123", LV_SYMBOL_SETTINGS, ":)", " ", ".", LV_SYMBOL_NEW_LINE };
     int16_t r3x = 5;
     for (int c = 0; c < 6; ++c) {
-        lv_obj_t* btn = lv_btn_create(s_kbd);
-        lv_obj_set_pos(btn, r3x, rowY[3]);
-        lv_obj_set_size(btn, r3w[c], keyH);
-        lv_obj_set_style_radius(btn, 6, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_add_event_cb(btn, keyClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)((3 << 8) | c));
-        s_keys[3][c] = btn;
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, r3txt[c]);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-        lv_obj_center(lbl);
-        s_keyLbls[3][c] = lbl;
+        addKey(s_kbd, 3, c, r3x, rowY[3], r3w[c], keyH, &lv_font_montserrat_12);
+        lv_label_set_text(s_keyLbls[3][c], r3txt[c]);
         r3x += r3w[c] + 2;
     }
 
@@ -211,12 +184,10 @@ void m3KeyboardRefreshTheme() {
     uint32_t txtHex = g_sys.lightMode ? 0x1A1C20 : 0xE8EAED;
 
     lv_obj_set_style_bg_color(s_kbd, lv_color_hex(bgHex), 0);
-    for (int r = 0; r < 4; ++r) {
-        for (int c = 0; c < s_rowLens[r]; ++c) {
-            if (s_keys[r][c]) lv_obj_set_style_bg_color(s_keys[r][c], lv_color_hex(keyHex), 0);
-            if (s_keyLbls[r][c]) lv_obj_set_style_text_color(s_keyLbls[r][c], lv_color_hex(txtHex), 0);
-        }
-    }
+    lv_style_set_bg_color(&s_keyStyle, lv_color_hex(keyHex));
+    lv_style_set_text_color(&s_keyLblStyle, lv_color_hex(txtHex));
+    lv_obj_report_style_change(&s_keyStyle);
+    lv_obj_report_style_change(&s_keyLblStyle);
 }
 
 static void taTapCb(lv_event_t* e) {

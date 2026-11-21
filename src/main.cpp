@@ -37,12 +37,12 @@ void setup() {
     appManagerInit();
     statusBarInit();
     navBarInit();
-    m3KeyboardInit();
     quickSettingsInit();
 
     s_lastMinute = g_sys.minute;
-    Serial.printf("[BOOT] Ready %ux%u, Free Heap: %lu bytes\n",
-                  displayWidth(), displayHeight(), (unsigned long)ESP.getFreeHeap());
+    Serial.printf("[BOOT] Ready %ux%u, Free Heap: %lu B\n",
+                  displayWidth(), displayHeight(),
+                  (unsigned long)ESP.getFreeHeap());
 }
 
 void loop() {
