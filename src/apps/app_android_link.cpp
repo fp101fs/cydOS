@@ -1,6 +1,7 @@
 #include "app_registry.h"
 #include "../theme/m3_theme.h"
 #include "../components/m3_widgets.h"
+#include "../components/m3_modal.h"
 #include "../ui/app_manager.h"
 #include "../drivers/companion_mgr.h"
 #include <Arduino.h>
@@ -186,6 +187,20 @@ static lv_obj_t* createQrBox(lv_obj_t* parent, const char* payload) {
     return frame;
 }
 
+static void apkHelpModalCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    static const M3ModalStep kSteps[] = {
+        { "App Blocked?",
+          "Tap More details on the popup.\n\nThen tap Install anyway." },
+        { "Unknown Apps?",
+          "Tap Settings on the popup.\n\nTurn on Allow from this source." },
+        { "Restricted Setting?",
+          "Open Android app after install.\n\nTap Grant Notification Access for steps." },
+    };
+    m3ModalShowSteps(kSteps, sizeof(kSteps) / sizeof(kSteps[0]), linkAccentHex());
+}
+
 static void renderApkQrView() {
     stopPairServer();
 
@@ -196,7 +211,20 @@ static void renderApkQrView() {
 
     createQrBox(s_body, COMPANION_APK_URL);
 
-    lv_obj_t* nextBtn = m3PillBtn(s_body, "App Installed  " LV_SYMBOL_RIGHT, linkAccentHex(), 0xFFFFFF, LV_PCT(100), 30);
+    lv_obj_t* bar = lv_obj_create(s_body);
+    lv_obj_set_size(bar, LV_PCT(100), 30);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_pad_all(bar, 0, 0);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(bar, 6, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* helpBtn = m3PillBtn(bar, "?", m3SurfaceHighestHex(), m3TextPrimaryHex(), 34, 30);
+    lv_obj_add_event_cb(helpBtn, apkHelpModalCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* nextBtn = m3PillBtn(bar, "App Installed  " LV_SYMBOL_RIGHT, linkAccentHex(), 0xFFFFFF, 0, 30);
+    lv_obj_set_flex_grow(nextBtn, 1);
     lv_obj_add_event_cb(nextBtn, goPairStepCb, LV_EVENT_CLICKED, nullptr);
 }
 

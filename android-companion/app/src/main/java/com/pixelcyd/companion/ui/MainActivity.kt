@@ -36,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -45,10 +46,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -171,6 +177,13 @@ class MainActivity : ComponentActivity() {
                         onOpenNotifAccess = {
                             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         },
+                        onOpenAppInfo = {
+                            startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", packageName, null)
+                                }
+                            )
+                        },
                         onCopyToken = {
                             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("Pairing Token", state.pairingToken))
@@ -221,11 +234,25 @@ private fun CompanionScreen(
     onScanCydQr: () -> Unit,
     onToggleForwarding: (Boolean) -> Unit,
     onOpenNotifAccess: () -> Unit,
+    onOpenAppInfo: () -> Unit,
     onCopyToken: () -> Unit,
     onRegenerateToken: () -> Unit,
     onToggleServer: () -> Unit,
     onClearHistory: () -> Unit
 ) {
+    var showNotifGuide by remember { mutableStateOf(false) }
+    var notifGuideStep by remember { mutableIntStateOf(0) }
+
+    if (showNotifGuide) {
+        NotificationAccessGuideModal(
+            step = notifGuideStep,
+            onStepChange = { notifGuideStep = it },
+            onOpenNotifAccess = onOpenNotifAccess,
+            onOpenAppInfo = onOpenAppInfo,
+            onDismiss = { showNotifGuide = false }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -357,13 +384,32 @@ private fun CompanionScreen(
                 }
 
                 Button(
-                    onClick = onOpenNotifAccess,
+                    onClick = {
+                        if (state.notificationAccessGranted) {
+                            onOpenNotifAccess()
+                        } else {
+                            notifGuideStep = 0
+                            showNotifGuide = true
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         if (state.notificationAccessGranted) "Notification Access Settings"
                         else "Grant Notification Access"
                     )
+                }
+
+                if (!state.notificationAccessGranted) {
+                    OutlinedButton(
+                        onClick = {
+                            notifGuideStep = 1
+                            showNotifGuide = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Blocked by Restricted Setting? Tap for Fix")
+                    }
                 }
             }
         }
@@ -393,6 +439,112 @@ private fun CompanionScreen(
             }
         }
     }
+}
+
+@Composable
+private fun NotificationAccessGuideModal(
+    step: Int,
+    onStepChange: (Int) -> Unit,
+    onOpenNotifAccess: () -> Unit,
+    onOpenAppInfo: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isStep1 = step == 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF191C24),
+        titleContentColor = Color(0xFF25D366),
+        textContentColor = Color(0xFFE8EAED),
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isStep1) "Step 1: Enable Access" else "Step 2: Unlock Restricted",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${step + 1} / 2",
+                    fontSize = 12.sp,
+                    color = Color(0xFF9AA0A6)
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (isStep1) {
+                    Text(
+                        text = "1. Tap Open Settings below.\n" +
+                               "2. Turn on Pixel CYD WhatsApp Bridge.\n\n" +
+                               "If Android says \"Restricted setting\", come back and tap Next.",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    Button(
+                        onClick = onOpenNotifAccess,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF25D366),
+                            contentColor = Color(0xFF062A14)
+                        )
+                    ) {
+                        Text("Open Notification Settings", fontWeight = FontWeight.SemiBold)
+                    }
+                } else {
+                    Text(
+                        text = "1. Tap Open App Info below.\n" +
+                               "2. Tap ⋮ (top right) -> Allow restricted settings.\n" +
+                               "   (On Android 15, scroll to bottom.)\n" +
+                               "3. Come back and tap Open Notification Settings.",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    Button(
+                        onClick = onOpenAppInfo,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF25D366),
+                            contentColor = Color(0xFF062A14)
+                        )
+                    ) {
+                        Text("Open App Info", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        onClick = onOpenNotifAccess,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open Notification Settings")
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            if (isStep1) {
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = Color(0xFF9AA0A6))
+                }
+            } else {
+                TextButton(onClick = { onStepChange(0) }) {
+                    Text("Back", color = Color(0xFF9AA0A6))
+                }
+            }
+        },
+        confirmButton = {
+            if (isStep1) {
+                TextButton(onClick = { onStepChange(1) }) {
+                    Text("Next (If Blocked)", color = Color(0xFF25D366), fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text("Done", color = Color(0xFF25D366), fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    )
 }
 
 @Composable
