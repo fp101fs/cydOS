@@ -45,9 +45,10 @@ static uint16_t xptTransfer(uint8_t cmd) {
 
 static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
     z = xptTransfer(0xB0);
-    if (z < TOUCH_Z_MIN || z > 4090) return false;
+    if (z < TOUCH_Z_MIN) return false;
     x = xptTransfer(0xD0);
     y = xptTransfer(0x90);
+    if (x < 40 || x > 4060 || y < 40 || y > 4060) return false;
     return true;
 }
 

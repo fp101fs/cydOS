@@ -25,8 +25,8 @@
 #define PIN_TOUCH_CS   33
 #define PIN_TOUCH_IRQ  36
 
-// Lower threshold for light, responsive finger touches
-#define TOUCH_Z_MIN 80
+// Balanced threshold for light finger touches without resting noise
+#define TOUCH_Z_MIN 130
 
 // Default portrait dimensions (verified at runtime via tft.width()/height())
 #define DEFAULT_SCREEN_W 240
