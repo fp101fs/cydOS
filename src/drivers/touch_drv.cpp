@@ -49,6 +49,7 @@ static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
     if (z < TOUCH_Z_MIN) return false;
     x = xptTransfer(0xD0);
     y = xptTransfer(0x90);
+    if (x < 30 || x > 4065 || y < 30 || y > 4065) return false;
     return true;
 }
 
@@ -83,25 +84,14 @@ static void lvglTouchReadCb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     (void)drv;
     static int16_t lastX = 0;
     static int16_t lastY = 0;
-    static bool wasPressed = false;
 
     TouchPoint pt;
     if (touchReadPoint(pt)) {
         lastX = pt.x;
         lastY = pt.y;
         data->state = LV_INDEV_STATE_PR;
-        if (!wasPressed) {
-            wasPressed = true;
-            if (!g_sys.flashlightOn) hwRgbLed(0, 255, 255);
-            Serial.printf("[TOUCH] PR x=%d y=%d\n", lastX, lastY);
-        }
     } else {
         data->state = LV_INDEV_STATE_REL;
-        if (wasPressed) {
-            wasPressed = false;
-            if (!g_sys.flashlightOn) hwRgbLed(0, 0, 0);
-            Serial.println("[TOUCH] REL");
-        }
     }
     data->point.x = lastX;
     data->point.y = lastY;

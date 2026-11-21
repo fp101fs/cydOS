@@ -25,7 +25,7 @@
 #define PIN_TOUCH_CS   33
 #define PIN_TOUCH_IRQ  36
 
-#define TOUCH_Z_MIN 90
+#define TOUCH_Z_MIN 135
 
 // Default portrait dimensions (verified at runtime via tft.width()/height())
 #define DEFAULT_SCREEN_W 240

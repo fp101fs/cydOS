@@ -85,7 +85,7 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, AppId id, int16_t x, int16_t y)
     lv_obj_set_style_pad_all(wrap, 0, 0);
     lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(wrap, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(wrap, appIconClickCb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)id);
+    lv_obj_add_event_cb(wrap, appIconClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)id);
     lv_obj_add_event_cb(wrap, appIconLongPressCb, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)id);
 
     lv_obj_t* icoBox = lv_obj_create(wrap);
