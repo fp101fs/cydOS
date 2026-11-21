@@ -4,6 +4,7 @@
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
 #include "../drivers/wifi_mgr.h"
+#include "../drivers/time_mgr.h"
 #include "../components/m3_widgets.h"
 #include <stdio.h>
 
@@ -11,6 +12,7 @@ static lv_obj_t* s_shade = nullptr;
 static bool s_isOpen = false;
 
 static lv_obj_t* s_qsTime = nullptr;
+static lv_obj_t* s_qsDate = nullptr;
 static lv_obj_t* s_qsBatt = nullptr;
 static lv_obj_t* s_tileWifi = nullptr;
 static lv_obj_t* s_tileWifiSub = nullptr;
@@ -176,11 +178,10 @@ void quickSettingsInit() {
     lv_obj_set_style_text_font(s_qsTime, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(s_qsTime, 14, 14);
 
-    lv_obj_t* dateLbl = lv_label_create(s_shade);
-    lv_label_set_text(dateLbl, "Sat, Nov 21");
-    lv_obj_set_style_text_color(dateLbl, lv_color_hex(M3Color::TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(dateLbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_pos(dateLbl, 14, 38);
+    s_qsDate = lv_label_create(s_shade);
+    lv_obj_set_style_text_color(s_qsDate, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(s_qsDate, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(s_qsDate, 14, 38);
 
     s_qsBatt = lv_label_create(s_shade);
     lv_obj_set_style_text_color(s_qsBatt, lv_color_hex(M3Color::TERTIARY), 0);
@@ -251,15 +252,21 @@ void quickSettingsRefreshTheme() {
     if (!s_shade) return;
     lv_obj_set_style_bg_color(s_shade, lv_color_hex(g_sys.lightMode ? 0xEAEFF7 : 0x11131B), 0);
     lv_obj_set_style_text_color(s_qsTime, lv_color_hex(m3TextPrimaryHex()), 0);
+    if (s_qsDate) lv_obj_set_style_text_color(s_qsDate, lv_color_hex(m3TextSecondaryHex()), 0);
     quickSettingsRefresh();
 }
 
 void quickSettingsRefresh() {
     if (!s_shade) return;
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02u:%02u", g_sys.hour, g_sys.minute);
+    char buf[24];
+    timeMgrFormatHHMM(buf, sizeof(buf));
     lv_label_set_text(s_qsTime, buf);
+
+    if (s_qsDate) {
+        timeMgrFormatShortDate(buf, sizeof(buf));
+        lv_label_set_text(s_qsDate, buf);
+    }
 
     snprintf(buf, sizeof(buf), "%u%%", g_sys.batteryPct);
     lv_label_set_text(s_qsBatt, buf);

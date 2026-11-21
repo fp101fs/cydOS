@@ -5,6 +5,7 @@
 #include "drivers/display_drv.h"
 #include "drivers/touch_drv.h"
 #include "drivers/wifi_mgr.h"
+#include "drivers/time_mgr.h"
 #include "theme/m3_theme.h"
 #include "components/m3_keyboard.h"
 #include "ui/home_screen.h"
@@ -13,7 +14,6 @@
 #include "ui/quick_settings.h"
 #include "ui/app_manager.h"
 
-static uint8_t s_lastMinute = 255;
 static bool s_bootWasDown = false;
 
 void setup() {
@@ -35,13 +35,13 @@ void setup() {
 
     m3ThemeInit();
     wifiMgrInit();
+    timeMgrInit();
     homeScreenInit();
     appManagerInit();
     statusBarInit();
     navBarInit();
     quickSettingsInit();
 
-    s_lastMinute = g_sys.minute;
     Serial.printf("[BOOT] Ready %ux%u, Apps: %u, Free Heap: %lu B\n",
                   displayWidth(), displayHeight(),
                   (unsigned)appGetCount(),
@@ -56,9 +56,10 @@ void loop() {
         if (quickSettingsIsOpen()) quickSettingsRefresh();
     }
 
-    if (g_sys.minute != s_lastMinute) {
-        s_lastMinute = g_sys.minute;
+    uint8_t timeChg = timeMgrTick();
+    if (timeChg & (TIME_CHG_MINUTE | TIME_CHG_DATE | TIME_CHG_SYNC | TIME_CHG_TZ)) {
         statusBarRefresh();
+        homeScreenRefreshDate();
         if (quickSettingsIsOpen()) quickSettingsRefresh();
     }
 

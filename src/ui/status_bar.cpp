@@ -2,6 +2,7 @@
 #include "quick_settings.h"
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
+#include "../drivers/time_mgr.h"
 #include <stdio.h>
 
 static lv_obj_t* s_bar = nullptr;
@@ -130,7 +131,7 @@ void statusBarRefresh() {
     if (!s_bar) return;
 
     char buf[16];
-    snprintf(buf, sizeof(buf), "%02u:%02u", g_sys.hour, g_sys.minute);
+    timeMgrFormatHHMM(buf, sizeof(buf));
     lv_label_set_text(s_timeLbl, buf);
 
     snprintf(buf, sizeof(buf), "%u%%", g_sys.batteryPct);

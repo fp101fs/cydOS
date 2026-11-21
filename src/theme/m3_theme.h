@@ -64,9 +64,15 @@ struct SystemState {
     bool autoLock       = false;
 
     uint8_t batteryPct  = 88;
-    uint8_t hour        = 14;
-    uint8_t minute      = 25;
-    uint32_t lastMinMs  = 0;
+    bool timeSynced     = false;
+    uint16_t year       = 2026;
+    uint8_t month       = 1;
+    uint8_t day         = 1;
+    uint8_t weekday     = 4;
+    uint8_t hour        = 0;
+    uint8_t minute      = 0;
+    uint8_t second      = 0;
+    int16_t tzOffsetMin = 0;
 };
 
 extern SystemState g_sys;

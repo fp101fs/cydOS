@@ -3,6 +3,7 @@
 #include "../apps/app_registry.h"
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
+#include "../drivers/time_mgr.h"
 #include "../components/m3_widgets.h"
 #include <stdio.h>
 
@@ -185,7 +186,6 @@ void homeScreenInit() {
     lv_obj_add_event_cb(glance, atGlanceClickCb, LV_EVENT_CLICKED, nullptr);
 
     s_atGlanceDate = lv_label_create(glance);
-    lv_label_set_text(s_atGlanceDate, "Sat, Nov 21");
     lv_obj_set_style_text_font(s_atGlanceDate, &lv_font_montserrat_16, 0);
 
     // Inline weather cluster (simple sun+cloud icon + temperature) just to the right of date
@@ -315,7 +315,15 @@ void homeScreenInit() {
     lv_obj_set_style_text_font(micIco, &lv_font_montserrat_12, 0);
     lv_obj_align(micIco, LV_ALIGN_RIGHT_MID, 0, 0);
 
+    homeScreenRefreshDate();
     homeScreenRefreshTheme();
+}
+
+void homeScreenRefreshDate() {
+    if (!s_atGlanceDate) return;
+    char buf[24];
+    timeMgrFormatShortDate(buf, sizeof(buf));
+    lv_label_set_text(s_atGlanceDate, buf);
 }
 
 void homeScreenRefreshTheme() {
