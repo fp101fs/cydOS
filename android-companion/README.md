@@ -1,0 +1,158 @@
+# Pixel CYD Android Companion (WhatsApp Bridge)
+
+A lightweight, local-network-only Kotlin Android companion app that forwards **WhatsApp** notifications to the **ESP32 Pixel CYD** (`pixel-cyd`) over WebSocket and supports sending quick replies via Android's official `RemoteInput` API.
+
+- **No cloud, no account, no database server.**
+- **Local Wi-Fi only** with a 6-digit pairing token.
+- **Privacy-first**: message bodies are kept only in a small in-memory buffer (max 30 recent items on Android, 12 on CYD) and are never written to disk or logged to Logcat.
+
+---
+
+## 1. Architecture Overview
+
+| Component | Location | Responsibility |
+| --- | --- | --- |
+| **Android Companion App** | `android-companion/` | Runs a Foreground Service + RFC 6455 WebSocket server (`:8765`), listens to WhatsApp notifications via `NotificationListenerService`, serves history, executes `RemoteInput` replies & dismissals, and advertises `_pixelcyd._tcp.` via NSD. |
+| **CYD Companion Driver** | `pixel-cyd/src/drivers/companion_mgr.{h,cpp}` | Background FreeRTOS task maintaining a non-blocking RFC 6455 WebSocket connection with reconnect backoff, heartbeat, NVS config persistence, and a 12-message local cache. |
+| **CYD WhatsApp App** | `pixel-cyd/src/apps/app_whatsapp.cpp` | Modular `REGISTER_APP_THEMED` LVGL app with Inbox, Message Detail + Reply composer (using `m3Keyboard`), Dismiss, and Setup screens. |
+
+---
+
+## 2. Build & Install
+
+### Android Companion App
+1. Open `android-companion/` in **Android Studio** (Ladybug 2024.2+ or newer, JDK 17, Android SDK 35).
+2. Let Gradle sync, then click **Run** (or `./gradlew assembleDebug` once Gradle wrapper is initialized in Android Studio) to install on your Android phone (Android 8.0 / API 26+).
+
+### ESP32 CYD Firmware
+```bash
+cd pixel-cyd
+
+# Build both board targets
+pio run -e cyd2usb -e cyd
+
+# Flash Dual-USB CYD (default)
+pio run -e cyd2usb -t upload
+
+# Flash Classic Single-USB CYD
+pio run -e cyd -t upload
+```
+
+---
+
+## 3. Android Permissions & Pairing
+
+1. Open **Pixel CYD Companion** on your Android phone.
+2. Allow **Post Notifications** (Android 13+) so the persistent status bar indicator can show when forwarding is active.
+3. Tap **Grant Notification Access** and enable **Pixel CYD WhatsApp Bridge** in Android's Notification Access settings.
+4. Ensure both your Android phone and the ESP32 CYD are connected to the **same 2.4 GHz Wi-Fi network**.
+5. Note the **Phone IP**, **Port** (`8765`), and **6-digit Pairing Token** shown in the Android app.
+6. On the CYD:
+   - Open **WhatsApp** from the Home Screen.
+   - Tap the green **Settings (gear)** button.
+   - Enter the **Phone IP**, **Port** (`8765`), and **Pairing Token**.
+   - Tap **Connect**. The status dot turns green (`Connected`) and recent messages sync automatically.
+
+---
+
+## 4. Communication Protocol (v1)
+
+Transport: **RFC 6455 WebSocket** at `ws://<phone-ip>:8765/ws` (UTF-8 JSON text frames, max 8 KB inbound on phone / 4 KB on CYD).
+
+All messages include `"v": 1` and `"type"`. The schema is intentionally extensible for future features (e.g., `camera_status`).
+
+### Handshake & Authentication
+CYD → Android:
+```json
+{ "v": 1, "type": "hello", "device": "Pixel-CYD", "token": "482910" }
+```
+Android → CYD:
+```json
+{ "v": 1, "type": "hello_ack", "ok": true, "forwarding_enabled": true }
+```
+
+### Live WhatsApp Notification
+Android → CYD:
+```json
+{
+  "v": 1,
+  "type": "notification",
+  "id": "a1b2c3d4e5f60718293a",
+  "sender": "Alex",
+  "conversation": "Alex",
+  "text": "Are we still on for 7pm?",
+  "timestamp": 1763720400000,
+  "time": "19:20",
+  "can_reply": true
+}
+```
+
+### History Sync
+CYD → Android:
+```json
+{ "v": 1, "type": "history_request", "limit": 12 }
+```
+Android → CYD:
+```json
+{
+  "v": 1,
+  "type": "history_response",
+  "items": [
+    {
+      "id": "a1b2c3d4e5f60718293a",
+      "sender": "Alex",
+      "conversation": "Alex",
+      "text": "Are we still on for 7pm?",
+      "timestamp": 1763720400000,
+      "time": "19:20",
+      "can_reply": true
+    }
+  ]
+}
+```
+
+### Reply via `RemoteInput`
+CYD → Android:
+```json
+{ "v": 1, "type": "reply_request", "req_id": 1, "id": "a1b2c3d4e5f60718293a", "text": "Yes, see you there!" }
+```
+Android → CYD (`status`: `"sent"`, `"unsupported"`, or `"failed"`):
+```json
+{ "v": 1, "type": "reply_result", "req_id": 1, "status": "sent" }
+```
+
+### Dismiss Notification
+CYD → Android:
+```json
+{ "v": 1, "type": "dismiss_request", "id": "a1b2c3d4e5f60718293a" }
+```
+Android → CYD:
+```json
+{ "v": 1, "type": "dismiss_result", "id": "a1b2c3d4e5f60718293a", "ok": true }
+```
+
+### Status & Heartbeat
+- Android → CYD: `{ "v": 1, "type": "status", "forwarding_enabled": true, "listener_connected": true }`
+- CYD ↔ Android: WebSocket Ping/Pong frames every 20s (plus optional JSON `ping`/`pong`).
+
+---
+
+## 5. Known Limitations
+
+- **WhatsApp replies require an active replyable notification**: Android only allows replying via `Notification.Action` + `RemoteInput` while the WhatsApp notification is still active in the Android shade. If the notification was already dismissed on the phone, cleared by WhatsApp, or lacks a `RemoteInput` action (e.g., missed-call or system alerts), the CYD displays `Unsupported` / `Reply unavailable` instead of pretending the message was sent.
+- **Cannot initiate brand-new conversations**: Only replies to active WhatsApp notifications are supported through official Android APIs.
+- **Local network only**: Both devices must be on the same LAN/Wi-Fi subnet without AP client isolation.
+- **Emoji / non-Latin glyphs**: LVGL's built-in Montserrat fonts render ASCII/Latin characters; emoji in WhatsApp previews may appear as placeholder boxes on the CYD.
+
+---
+
+## 6. Test Checklist
+
+- [ ] Install Android Companion app and grant Notification Access; verify `Notification Access: Granted` and `Listener Service: Running`.
+- [ ] Enter Phone IP, Port `8765`, and Pairing Token on CYD WhatsApp Setup; verify green `Connected` status on both devices.
+- [ ] Test invalid pairing token; verify CYD shows `Bad token` and Android logs `Rejected invalid pairing token`.
+- [ ] Receive a real WhatsApp message on the phone; verify CYD shows toast + unread count in status bar + message in Inbox.
+- [ ] Open the message on CYD, type a reply with the on-screen keyboard, tap **Send**; verify WhatsApp sends the reply and CYD shows `Reply sent` before clearing the input.
+- [ ] Dismiss the WhatsApp notification on the phone, then attempt a reply from CYD; verify CYD reports `Unsupported` and keeps the typed text intact.
+- [ ] Tap **Dismiss** on CYD for an active notification; verify it disappears from the Android notification shade and CYD list.
+- [ ] Toggle Wi-Fi off/on or stop/start the Android server; verify CYD preserves its local cache while offline and reconnects automatically with backoff.
