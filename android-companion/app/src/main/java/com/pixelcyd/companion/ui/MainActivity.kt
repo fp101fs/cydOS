@@ -136,8 +136,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
+                val detail = e.message ?: e.javaClass.simpleName
                 runOnUiThread {
-                    Toast.makeText(this, "Could not reach CYD on Wi-Fi", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Pair failed: $detail", Toast.LENGTH_LONG).show()
                 }
             }
         }
