@@ -6,9 +6,16 @@
 #include <stdio.h>
 
 static lv_obj_t* s_heapLbl = nullptr;
-static lv_obj_t* s_lvMemLbl = nullptr;
+static lv_obj_t* s_minHeapLbl = nullptr;
 static lv_obj_t* s_uptimeLbl = nullptr;
 static uint32_t s_lastUpdateMs = 0;
+
+static void sysInfoDeleteCb(lv_event_t* e) {
+    (void)e;
+    s_heapLbl = nullptr;
+    s_minHeapLbl = nullptr;
+    s_uptimeLbl = nullptr;
+}
 
 static void refreshSysInfo() {
     if (!s_heapLbl) return;
@@ -19,10 +26,12 @@ static void refreshSysInfo() {
              (unsigned long)(ESP.getHeapSize() / 1024));
     lv_label_set_text(s_heapLbl, buf);
 
-    lv_mem_monitor_t mon;
-    lv_mem_monitor(&mon);
-    snprintf(buf, sizeof(buf), "%u%% used (%u KB)", mon.used_pct, (unsigned int)(mon.total_size / 1024));
-    lv_label_set_text(s_lvMemLbl, buf);
+    if (s_minHeapLbl) {
+        snprintf(buf, sizeof(buf), "%lu KB (max %lu KB)",
+                 (unsigned long)(ESP.getMinFreeHeap() / 1024),
+                 (unsigned long)(ESP.getMaxAllocHeap() / 1024));
+        lv_label_set_text(s_minHeapLbl, buf);
+    }
 
     uint32_t sec = millis() / 1000;
     snprintf(buf, sizeof(buf), "%lum %02lus", (unsigned long)(sec / 60), (unsigned long)(sec % 60));
@@ -30,6 +39,7 @@ static void refreshSysInfo() {
 }
 
 void buildAppSysInfo(lv_obj_t* body) {
+    lv_obj_add_event_cb(body, sysInfoDeleteCb, LV_EVENT_DELETE, nullptr);
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(body, 6, 0);
 
@@ -45,7 +55,7 @@ void buildAppSysInfo(lv_obj_t* body) {
     m3InfoRow(card, "CPU", buf);
 
     m3InfoRow(card, "Heap Free", "...", &s_heapLbl);
-    m3InfoRow(card, "LVGL Pool", "...", &s_lvMemLbl);
+    m3InfoRow(card, "Heap Min", "...", &s_minHeapLbl);
 
     snprintf(buf, sizeof(buf), "%ux%u Portrait", displayWidth(), displayHeight());
     m3InfoRow(card, "Display", buf);

@@ -28,9 +28,14 @@ void buildAppAbout(lv_obj_t* body) {
     lv_obj_set_style_pad_row(info, 2, 0);
 
     m3InfoRow(info, "Model", "ESP32-2432S028");
-    m3InfoRow(info, "UI Engine", "LVGL 8.3.11");
+    m3InfoRow(info, "Firmware", "v1.0 (Modular)");
+    m3InfoRow(info, "UI Engine", "LVGL 8.4.0");
     m3InfoRow(info, "Design", "Material You (M3)");
+#ifdef ST7789_2_DRIVER
     m3InfoRow(info, "Display", "240x320 ST7789");
+#else
+    m3InfoRow(info, "Display", "240x320 ILI9341");
+#endif
     m3InfoRow(info, "Touch", "XPT2046 Resistive");
 }
 

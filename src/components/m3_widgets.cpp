@@ -196,7 +196,6 @@ void m3ShowToast(const char* text, uint32_t durationMs) {
     s_toast = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_max_width(s_toast, 216, 0);
-    s_toast = s_toast;
     lv_obj_set_style_bg_color(s_toast, lv_color_hex(m3SurfaceHighestHex()), 0);
     lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_toast, 1, 0);

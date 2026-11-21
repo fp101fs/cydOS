@@ -1,27 +1,67 @@
-# Pixel 8 CYD UI (LVGL) — v0.2
+# Pixel 8 CYD UI (LVGL) — v1.0
 
-A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32 Cheap Yellow Display (CYD / ESP32-2432S028)** built with **LVGL 8.3/8.4** and **TFT_eSPI**.
+A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32 Cheap Yellow Display (CYD / ESP32-2432S028)** built with **LVGL 8.4**, **TFT_eSPI**, **NimBLE-Arduino**, and **PlatformIO / Arduino**.
 
 ## Features
-- **240×320 Portrait** Material 3 interface using ESP32 dynamic heap (`LV_MEM_CUSTOM 1`, ~283 KB free heap at boot)
-- **Dark & Light Mode**: Dedicated **Theme** app icon (right after Settings) and Menu shortcut to switch the entire UI—including status bar, navigation bar, quick settings, apps, and keyboard—between Dark and Light themes
-- **Status Bar**: Time, Bluetooth, Wi-Fi, 4-bar cellular signal, airplane badge, and battery indicator
-- **Persistent Android 3-Button Bottom Bar**: Always-visible `54px` bar with evenly spaced **Back**, **Home**, and **Menu** (hamburger) buttons + quick action menu
-- **Quick Settings Shade**: Swipe down or tap the status bar for Wi-Fi, Bluetooth, Airplane Mode, Torch (onboard RGB LED), and live PWM display brightness slider
-- **Custom On-Screen Keyboard**: 4-row QWERTY / `123` symbols keyboard that automatically appears when tapping text inputs (Browser URL bar, Notes) and adapts to Dark/Light mode
-- **Home Screen**: At-a-Glance date & weather widget (opens Clock/Calendar), swipeable 2-page 4×2 app grid with page indicator dots, and Google Search pill
-- **14 Interactive Apps**: Settings, Theme (Dark/Light toggle), Music, Files, Gallery, Browser, Terminal, Wi-Fi, Bluetooth, Sys Info, Calculator, Notes, About, and Clock/Calendar
+- **Modular Single-File App Architecture**: Drop a single `src/apps/app_<name>.cpp` file with `REGISTER_APP(...)` / `REGISTER_APP_THEMED(...)` / `REGISTER_APP_EX(...)` and it automatically registers, sorts, and paginates onto the Home Screen (up to 32 apps across dynamic 4×2 pages) with zero edits to core UI files.
+- **240×320 Portrait Material 3 UI**: Uses ESP32 dynamic heap (`LV_MEM_CUSTOM 1`) with live **Dark**, **Light**, and **AMOLED Black** theme switching across Home, Status Bar, Nav Bar, Quick Settings, Keyboard, and active apps.
+- **Compacted Home Screen**: Single-line At-a-Glance date + inline weather icon & temperature, enlarged `56×70` (`52×52` icon) app tiles on a swipeable 4×2 grid with dynamic page dots, and Google Search pill.
+- **Clean 3-Button Android Bottom Bar & Tall Menu Popup**: Transparent bottom bar with Back, Home, and Menu buttons plus an enlarged `184×226` popup menu (`38px` tappable rows).
+- **Classic iPhone-Style On-Screen Keyboard**: 4-row QWERTY / `123` symbols keyboard with a live key-preview popup above the pressed key, drag-away cancel (`±4px` tolerance), and Light/Dark theming.
+- **Tuned Resistive Touch**: `TOUCH_Z_MIN = 80` with a 2-sample coordinate-delta noise filter (`TOUCH_SAMPLE_MAX_DELTA = 120`) for reliable light finger taps without phantom spikes.
+- **Real ESP32 Hardware Features**:
+  - **Wi-Fi (`app_wifi.cpp`, `wifi_mgr`)**: Async 2.4 GHz `WiFi.scanNetworks()`, on-screen keyboard password entry, `WiFi.begin()`, NVS credential persistence & boot auto-reconnect, live RSSI bars, and Airplane Mode support.
+  - **NTP Clock & Date (`app_clock.cpp`, `time_mgr`)**: Automatic `configTime()` sync over Wi-Fi, persisted UTC timezone offset in NVS (`-12:00..+14:00`), live `lv_calendar`, and synchronized time/date in Status Bar, Home Screen, and Quick Settings.
+  - **HTTP/HTTPS Text Browser (`app_browser.cpp`, `http_reader`)**: Async FreeRTOS worker fetching real web pages over Wi-Fi (`HTTPClient` / `WiFiClientSecure`) with redirect following, streaming HTML-to-text extraction, and working bookmarks.
+  - **Persistent Notes (`app_notes.cpp`, `notes_store`)**: Up to 8 notes persisted in ESP32 NVS (`Preferences`) across reboots, plus optional hot-plug microSD export/import (`/pixel_notes.txt` on VSPI).
+  - **Bluetooth BLE Scanner (`app_bluetooth.cpp`, `ble_mgr`)**: Scanner-only `NimBLE-Arduino` integration displaying nearby BLE device names, uppercase MAC addresses, and RSSI with lazy init for heap efficiency.
+- **Visual-Limits Benchmark Apps**:
+  - **SqLine Lab (`app_sqline_limits.cpp`)**: SquareLine Studio visual-limits showcase (gradients, dual radial arcs, glassmorphic alpha slider, animated line chart, font scaling, 12-widget Stress Arena, live FPS & free-heap HUD).
+  - **EEZ Studio (`app_eez_limits.cpp`)**: EEZ Studio HMI visual-limits showcase (instrument gauge + live channel bars, Bars/Line chart toggle, alpha/shadow depth deck, `A-`/`A+` font ladder, 16-widget Stress Matrix, live FPS & free-heap HUD).
+- **16 Registered Apps (2 full 4×2 pages)**: Files, Gallery, Terminal, Browser, Notes, Sys Info, Calc, About, Clock, Music, Wi-Fi, Settings, Theme, Bluetooth, SqLine Lab, and EEZ Studio.
 
 ## Hardware
-- **Target**: ESP32-2432S028 (`cyd2usb` ST7789 + GPIO 27 backlight, and `cyd` ILI9341 + GPIO 21 backlight)
-- **Touch**: XPT2046 resistive touch on dedicated pins (`CLK=25, MOSI=32, MISO=39, CS=33, IRQ=36`) with portrait X-mirror correction, tuned `TOUCH_Z_MIN=150`, and `scroll_limit=20`
+- **Boards**:
+  - `cyd2usb`: Dual-USB / USB-C CYD (`ST7789`, `GPIO 27` backlight) — default environment
+  - `cyd`: Classic single-USB CYD (`ILI9341`, `GPIO 21` backlight)
+- **Touch**: XPT2046 resistive touch on dedicated pins (`CLK=25, MOSI=32, MISO=39, CS=33, IRQ=36`) with portrait X-mirror correction, `TOUCH_Z_MIN=80`, and 2-sample delta filtering (`TOUCH_SAMPLE_MAX_DELTA=120`).
+- **microSD (optional)**: VSPI (`SCK=18, MISO=19, MOSI=23, CS=5`) used on-demand by Notes export/import.
+
+## Memory & Flash Footprint (`huge_app.csv`, 3 MB app partition)
+| Target | RAM (Static) | Flash Used | Flash Free |
+| --- | --- | --- | --- |
+| `cyd2usb` (ST7789) | ~27.1% (~88.8 KB / 320 KB) | ~50.6% (~1.59 MB / 3.15 MB) | ~49.4% (~1.55 MB) |
+| `cyd` (ILI9341) | ~27.1% (~88.8 KB / 320 KB) | ~50.6% (~1.59 MB / 3.15 MB) | ~49.4% (~1.55 MB) |
 
 ## Build & Flash
 ```bash
+# Build both board targets
+pio run -e cyd2usb -e cyd
+
+# Flash Dual-USB CYD (default)
 pio run -e cyd2usb -t upload
+
+# Flash Classic Single-USB CYD
+pio run -e cyd -t upload
 ```
 Hold the **BOOT** button during reset (or use **Settings → Recalibrate Touch**) to run interactive 2-point touch calibration.
 
+## Adding a New App
+Create a single file `src/apps/app_mytool.cpp`:
+```cpp
+#include "app_registry.h"
+#include "../components/m3_widgets.h"
+
+static void buildMyTool(lv_obj_t* body) {
+    lv_obj_t* lbl = lv_label_create(body);
+    lv_label_set_text(lbl, "Hello CYD!");
+}
+
+REGISTER_APP(mytool, "mytool", "My Tool", LV_SYMBOL_OK, 0x8AB4F8, 0x1D3557, buildMyTool, nullptr, 170);
+```
+Rebuild and flash—no other files need to be edited.
+
 ## Changelog
+- **v1.0**: Modular single-file `REGISTER_APP` architecture with dynamic Home pagination, tuned light-touch sensitivity (`TOUCH_Z_MIN=80` + 2-sample filter), live active-app theme refresh, compacted At-a-Glance + larger app tiles, clean transparent nav bar + taller Menu popup, iPhone-style keyboard key-preview popup, real 2.4 GHz Wi-Fi + NVS, real NTP clock/date + timezone, real HTTP/HTTPS text reader browser, real NVS + microSD Notes, real NimBLE BLE scanner, and SquareLine Studio + EEZ Studio visual-limits benchmark apps.
 - **v0.2**: Persistent 3-button Android bottom bar (Back/Home/Menu), Dark/Light Theme app icon, custom Light/Dark on-screen keyboard, ST7789 touch X-mirror fix & light-touch tuning, and `LV_MEM_CUSTOM 1` dynamic heap allocation.
 - **v0.1**: Initial Pixel 8 CYD LVGL UI release.

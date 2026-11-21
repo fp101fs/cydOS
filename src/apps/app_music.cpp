@@ -70,7 +70,18 @@ static void playCb(lv_event_t* e) {
     refreshMusicUi();
 }
 
+static void musicDeleteCb(lv_event_t* e) {
+    (void)e;
+    s_artBox = nullptr;
+    s_titleLbl = nullptr;
+    s_artistLbl = nullptr;
+    s_progBar = nullptr;
+    s_timeLbl = nullptr;
+    s_playLbl = nullptr;
+}
+
 void buildAppMusic(lv_obj_t* body) {
+    lv_obj_add_event_cb(body, musicDeleteCb, LV_EVENT_DELETE, nullptr);
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
     // Album art card
