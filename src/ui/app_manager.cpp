@@ -122,6 +122,14 @@ bool appManagerHasActiveApp() {
     return s_appWin != nullptr && !s_closing;
 }
 
+const char* appManagerGetActiveId() {
+    return (s_activeMeta && !s_closing) ? s_activeMeta->id : "home";
+}
+
+const char* appManagerGetActiveName() {
+    return (s_activeMeta && !s_closing) ? s_activeMeta->name : "Home";
+}
+
 lv_obj_t* appManagerGetHeader() {
     return s_appHeader;
 }

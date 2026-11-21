@@ -54,6 +54,13 @@ object CompanionRepository {
     @Volatile
     var onStatusChanged: (() -> Unit)? = null
 
+    @Volatile
+    var onSendToCyd: ((String) -> Boolean)? = null
+
+    fun sendCommandToCyd(payload: String): Boolean {
+        return onSendToCyd?.invoke(payload) == true
+    }
+
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         appPrefs = prefs

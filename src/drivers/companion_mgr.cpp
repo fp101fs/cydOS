@@ -1,4 +1,5 @@
 #include "companion_mgr.h"
+#include "screen_mirror.h"
 #include "../theme/m3_theme.h"
 
 #include <Arduino.h>
@@ -369,6 +370,11 @@ static bool wsSendFrame(WiFiClient& cli, uint8_t opcode, const uint8_t* payload,
 static bool wsSendText(WiFiClient& cli, const char* text) {
     if (!text) return false;
     return wsSendFrame(cli, 0x01, (const uint8_t*)text, strlen(text));
+}
+
+static bool wsSendBinary(WiFiClient& cli, const uint8_t* data, size_t len) {
+    if (!data || len == 0) return false;
+    return wsSendFrame(cli, 0x02, data, len);
 }
 
 static bool wsHandshake(WiFiClient& cli, const char* host, uint16_t port) {
@@ -751,6 +757,36 @@ static void handleIncomingJson(const char* payload, WiFiClient& cli) {
         return;
     }
 
+    if (strcmp(type, "mirror_control") == 0) {
+        bool enable = doc["enable"] | false;
+        screenMirrorEnqueueCmd(enable ? "stream_on" : "stream_off", "", 0);
+        return;
+    }
+
+    if (strcmp(type, "ui_tree_request") == 0) {
+        screenMirrorRequestUiTree();
+        return;
+    }
+
+    if (strcmp(type, "remote_input") == 0) {
+        const char* action = doc["action"] | "";
+        int16_t x1 = (int16_t)(doc["x"] | (doc["x1"] | 0));
+        int16_t y1 = (int16_t)(doc["y"] | (doc["y1"] | 0));
+        int16_t x2 = (int16_t)(doc["x2"] | x1);
+        int16_t y2 = (int16_t)(doc["y2"] | y1);
+        uint16_t dur = (uint16_t)(doc["duration_ms"] | 220);
+        screenMirrorEnqueueInput(action, x1, y1, x2, y2, dur);
+        return;
+    }
+
+    if (strcmp(type, "remote_cmd") == 0) {
+        const char* cmd = doc["cmd"] | "";
+        const char* argStr = doc["app_id"] | (doc["label"] | (doc["arg"] | ""));
+        int32_t argInt = doc["value"] | 0;
+        screenMirrorEnqueueCmd(cmd, argStr, argInt);
+        return;
+    }
+
     if (strcmp(type, "ping") == 0) {
         char pong[64];
         snprintf(pong, sizeof(pong), "{\"v\":%u,\"type\":\"pong\"}", (unsigned)COMPANION_PROTOCOL_VER);
@@ -1013,6 +1049,7 @@ static void companionWorkerTask(void* param) {
         int res = wsPollFrame(cli, rxBuf, WS_MAX_FRAME_BYTES);
         if (res < 0) {
             cli.stop();
+            screenMirrorOnCompanionDisconnected();
             COMP_LOCK();
             if (s_connState != CompanionConnState::AUTH_FAILED) {
                 s_connState = CompanionConnState::DISCONNECTED;
@@ -1049,9 +1086,39 @@ static void companionWorkerTask(void* param) {
         if (hasTx) {
             if (!wsSendText(cli, txBuf)) {
                 cli.stop();
+                screenMirrorOnCompanionDisconnected();
                 continue;
             }
             lastActivityMs = millis();
+        }
+
+        // Flush pending screen-mirror JSON (ui_tree / mirror_status) using rxBuf as scratch
+        if (companionGetState() == CompanionConnState::CONNECTED) {
+            if (screenMirrorPopPendingJson(rxBuf, WS_MAX_FRAME_BYTES)) {
+                if (!wsSendText(cli, rxBuf)) {
+                    cli.stop();
+                    screenMirrorOnCompanionDisconnected();
+                    continue;
+                }
+                lastActivityMs = millis();
+            }
+
+            // Stream up to 2 dirty RLE RGB565 screen bands per tick when mirror is active
+            if (screenMirrorIsStreaming()) {
+                for (int b = 0; b < 2; ++b) {
+                    size_t bandLen = 0;
+                    if (!screenMirrorPopDirtyBand((uint8_t*)rxBuf, WS_MAX_FRAME_BYTES, &bandLen)) {
+                        break;
+                    }
+                    if (!wsSendBinary(cli, (const uint8_t*)rxBuf, bandLen)) {
+                        cli.stop();
+                        screenMirrorOnCompanionDisconnected();
+                        break;
+                    }
+                    lastActivityMs = millis();
+                }
+                if (!cli.connected()) continue;
+            }
         }
 
         // Periodic heartbeat ping
@@ -1060,11 +1127,13 @@ static void companionWorkerTask(void* param) {
             lastPingMs = now;
             if (!wsSendFrame(cli, 0x09, nullptr, 0)) {
                 cli.stop();
+                screenMirrorOnCompanionDisconnected();
                 continue;
             }
         }
         if ((uint32_t)(now - lastActivityMs) >= IDLE_TIMEOUT_MS) {
             cli.stop();
+            screenMirrorOnCompanionDisconnected();
             COMP_LOCK();
             s_connState = CompanionConnState::DISCONNECTED;
             copyStr(s_lastError, sizeof(s_lastError), "Heartbeat timeout");
@@ -1073,7 +1142,7 @@ static void companionWorkerTask(void* param) {
             continue;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(screenMirrorIsStreaming() ? 8 : 20));
     }
 }
 
@@ -1108,7 +1177,7 @@ void companionMgrInit() {
 
     if (!s_workerStarted) {
         s_workerStarted = true;
-        xTaskCreatePinnedToCore(companionWorkerTask, "companion_ws", 4096, nullptr, 1, nullptr, 0);
+        xTaskCreatePinnedToCore(companionWorkerTask, "companion_ws", 6144, nullptr, 1, nullptr, 0);
     }
 }
 

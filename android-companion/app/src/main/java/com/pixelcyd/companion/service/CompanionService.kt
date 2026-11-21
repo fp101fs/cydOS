@@ -89,6 +89,9 @@ class CompanionService : Service() {
             server.broadcastStatus()
             updateForegroundNotification()
         }
+        CompanionRepository.onSendToCyd = { payload ->
+            server.sendToAuthenticated(payload)
+        }
 
         try {
             server.start()
@@ -111,6 +114,7 @@ class CompanionService : Service() {
     private fun stopServer() {
         CompanionRepository.onNewNotification = null
         CompanionRepository.onStatusChanged = null
+        CompanionRepository.onSendToCyd = null
         try {
             wsServer?.stop(1000)
         } catch (_: Exception) {

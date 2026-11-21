@@ -14,8 +14,9 @@ static lv_disp_drv_t s_disp_drv;
 static uint16_t s_width = DEFAULT_SCREEN_W;
 static uint16_t s_height = DEFAULT_SCREEN_H;
 static uint8_t s_brightness = 85;
+static volatile DisplayFlushHookFn s_flushHook = nullptr;
 
-static void IRAM_ATTR dispFlushCb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
+static void dispFlushCb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
     uint32_t w = (uint32_t)(area->x2 - area->x1 + 1);
     uint32_t h = (uint32_t)(area->y2 - area->y1 + 1);
 
@@ -25,7 +26,16 @@ static void IRAM_ATTR dispFlushCb(lv_disp_drv_t* drv, const lv_area_t* area, lv_
     tft.pushColors((uint16_t*)&color_p->full, w * h, false);
     tft.endWrite();
 
+    DisplayFlushHookFn hook = s_flushHook;
+    if (hook) {
+        hook(area, color_p);
+    }
+
     lv_disp_flush_ready(drv);
+}
+
+void displaySetFlushHook(DisplayFlushHookFn fn) {
+    s_flushHook = fn;
 }
 
 void displayInit() {

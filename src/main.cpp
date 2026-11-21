@@ -10,6 +10,7 @@
 #include "drivers/time_mgr.h"
 #include "drivers/notes_store.h"
 #include "drivers/companion_mgr.h"
+#include "drivers/screen_mirror.h"
 #include "theme/m3_theme.h"
 #include "components/m3_widgets.h"
 #include "components/m3_keyboard.h"
@@ -44,6 +45,7 @@ void setup() {
     timeMgrInit();
     notesStoreInit();
     companionMgrInit();
+    screenMirrorInit();
     homeScreenInit();
     appManagerInit();
     statusBarInit();
@@ -72,6 +74,7 @@ void loop() {
     if (companionMgrTick()) {
         statusBarRefresh();
     }
+    screenMirrorTick();
     char waSender[COMPANION_SENDER_MAX];
     char waPreview[64];
     if (companionConsumeNewAlert(waSender, sizeof(waSender), waPreview, sizeof(waPreview))) {

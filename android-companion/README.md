@@ -134,6 +134,13 @@ Android → CYD:
 - Android → CYD: `{ "v": 1, "type": "status", "forwarding_enabled": true, "listener_connected": true }`
 - CYD ↔ Android: WebSocket Ping/Pong frames every 20s (plus optional JSON `ping`/`pong`).
 
+### Live Screen Mirror & Programmatic Remote Control
+- **Toggle Stream** (Android → CYD): `{ "v": 1, "type": "mirror_control", "enable": true }`
+- **Screen Bands** (CYD → Android): Binary WebSocket frames (`opcode 0x02`) starting with `CY\x01` + band metadata + PackBits 16-bit Big-Endian RGB565 RLE payload (`120×160` in 10 dirty bands).
+- **UI Tree Inspection** (Android → CYD): `{ "v": 1, "type": "ui_tree_request" }` → CYD responds with `{ "v": 1, "type": "ui_tree", "w": 240, "h": 320, "active_app": "...", "elements": [{ "id", "type", "label", "x", "y", "w", "h", "cx", "cy" }] }`.
+- **Touch Injection** (Android → CYD): `{ "v": 1, "type": "remote_input", "action": "tap"|"down"|"move"|"up"|"swipe", "x": 120, "y": 160 }`.
+- **Programmatic Commands** (Android → CYD): `{ "v": 1, "type": "remote_cmd", "cmd": "home"|"back"|"quick_settings"|"launch_app"|"tap_label"|"brightness"|"refresh_ui", ... }`.
+
 ---
 
 ## 5. Known Limitations

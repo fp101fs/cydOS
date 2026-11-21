@@ -192,6 +192,132 @@ bool touchReadPoint(TouchPoint& out) {
     return true;
 }
 
+// ============================================================================
+// Remote / Programmatic Touch Injection (thread-safe)
+// ============================================================================
+
+enum class InjectedMode : uint8_t {
+    NONE = 0,
+    TAP,
+    POINTER,
+    SWIPE
+};
+
+static portMUX_TYPE s_injMux   = portMUX_INITIALIZER_UNLOCKED;
+static InjectedMode s_injMode  = InjectedMode::NONE;
+static bool         s_injDown  = false;
+static int16_t      s_injX1    = 0;
+static int16_t      s_injY1    = 0;
+static int16_t      s_injX2    = 0;
+static int16_t      s_injY2    = 0;
+static uint32_t     s_injStart = 0;
+static uint16_t     s_injDurMs = 60;
+
+static int16_t clampCoord(int16_t v, int16_t maxVal) {
+    if (v < 0) return 0;
+    if (v >= maxVal) return (int16_t)(maxVal - 1);
+    return v;
+}
+
+void touchInjectTap(int16_t x, int16_t y) {
+    int16_t cx = clampCoord(x, (int16_t)displayWidth());
+    int16_t cy = clampCoord(y, (int16_t)displayHeight());
+    portENTER_CRITICAL(&s_injMux);
+    s_injMode  = InjectedMode::TAP;
+    s_injDown  = true;
+    s_injX1    = cx;
+    s_injY1    = cy;
+    s_injStart = millis();
+    s_injDurMs = 65;
+    portEXIT_CRITICAL(&s_injMux);
+}
+
+void touchInjectPointer(bool pressed, int16_t x, int16_t y) {
+    int16_t cx = clampCoord(x, (int16_t)displayWidth());
+    int16_t cy = clampCoord(y, (int16_t)displayHeight());
+    portENTER_CRITICAL(&s_injMux);
+    s_injMode  = pressed ? InjectedMode::POINTER : InjectedMode::NONE;
+    s_injDown  = pressed;
+    s_injX1    = cx;
+    s_injY1    = cy;
+    s_injStart = millis();
+    portEXIT_CRITICAL(&s_injMux);
+}
+
+void touchInjectSwipe(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t durationMs) {
+    int16_t w = (int16_t)displayWidth();
+    int16_t h = (int16_t)displayHeight();
+    portENTER_CRITICAL(&s_injMux);
+    s_injMode  = InjectedMode::SWIPE;
+    s_injDown  = true;
+    s_injX1    = clampCoord(x1, w);
+    s_injY1    = clampCoord(y1, h);
+    s_injX2    = clampCoord(x2, w);
+    s_injY2    = clampCoord(y2, h);
+    s_injStart = millis();
+    s_injDurMs = (durationMs < 40) ? 40 : durationMs;
+    portEXIT_CRITICAL(&s_injMux);
+}
+
+static bool sampleInjectedTouch(TouchPoint& out) {
+    portENTER_CRITICAL(&s_injMux);
+    InjectedMode mode = s_injMode;
+    bool down         = s_injDown;
+    int16_t x1        = s_injX1;
+    int16_t y1        = s_injY1;
+    int16_t x2        = s_injX2;
+    int16_t y2        = s_injY2;
+    uint32_t startMs  = s_injStart;
+    uint16_t durMs    = s_injDurMs;
+    portEXIT_CRITICAL(&s_injMux);
+
+    if (mode == InjectedMode::NONE) return false;
+
+    uint32_t elapsed = millis() - startMs;
+    if (mode == InjectedMode::TAP) {
+        if (elapsed >= durMs) {
+            portENTER_CRITICAL(&s_injMux);
+            if (s_injMode == InjectedMode::TAP) s_injMode = InjectedMode::NONE;
+            portEXIT_CRITICAL(&s_injMux);
+            return false;
+        }
+        out.pressed = true;
+        out.x = x1;
+        out.y = y1;
+        return true;
+    }
+
+    if (mode == InjectedMode::POINTER) {
+        // Safety timeout if remote "up" packet was lost
+        if (!down || elapsed > 8000) {
+            portENTER_CRITICAL(&s_injMux);
+            if (s_injMode == InjectedMode::POINTER) s_injMode = InjectedMode::NONE;
+            portEXIT_CRITICAL(&s_injMux);
+            return false;
+        }
+        out.pressed = true;
+        out.x = x1;
+        out.y = y1;
+        return true;
+    }
+
+    if (mode == InjectedMode::SWIPE) {
+        if (elapsed >= durMs) {
+            portENTER_CRITICAL(&s_injMux);
+            if (s_injMode == InjectedMode::SWIPE) s_injMode = InjectedMode::NONE;
+            portEXIT_CRITICAL(&s_injMux);
+            return false;
+        }
+        int32_t t = (int32_t)elapsed;
+        int32_t d = (int32_t)durMs;
+        out.pressed = true;
+        out.x = (int16_t)(x1 + ((int32_t)(x2 - x1) * t) / d);
+        out.y = (int16_t)(y1 + ((int32_t)(y2 - y1) * t) / d);
+        return true;
+    }
+    return false;
+}
+
 static void lvglTouchReadCb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     (void)drv;
     static int16_t lastX = 0;
@@ -199,7 +325,8 @@ static void lvglTouchReadCb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     static bool wasPressed = false;
 
     TouchPoint pt;
-    if (touchReadPoint(pt)) {
+    bool pressed = sampleInjectedTouch(pt) || touchReadPoint(pt);
+    if (pressed) {
         lastX = pt.x;
         lastY = pt.y;
         data->state = LV_INDEV_STATE_PR;

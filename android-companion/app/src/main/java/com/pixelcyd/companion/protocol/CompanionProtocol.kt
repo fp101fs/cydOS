@@ -137,4 +137,133 @@ object CompanionProtocol {
             put("v", PROTOCOL_VERSION)
             put("type", "pong")
         }.toString()
+
+    // ========================================================================
+    // Screen Mirror & Programmatic Remote Control API
+    // ========================================================================
+
+    data class ScreenElement(
+        val id: Int,
+        val type: String,
+        val label: String,
+        val x: Int,
+        val y: Int,
+        val w: Int,
+        val h: Int,
+        val cx: Int,
+        val cy: Int,
+        val checked: Boolean = false
+    )
+
+    data class CydUiTree(
+        val width: Int = 240,
+        val height: Int = 320,
+        val activeApp: String = "home",
+        val activeName: String = "Home",
+        val streaming: Boolean = false,
+        val remoteEnabled: Boolean = true,
+        val keyboardOpen: Boolean = false,
+        val quickSettingsOpen: Boolean = false,
+        val elements: List<ScreenElement> = emptyList()
+    )
+
+    fun parseUiTree(doc: JSONObject): CydUiTree {
+        val elems = ArrayList<ScreenElement>()
+        val arr = doc.optJSONArray("elements")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val x = o.optInt("x", 0)
+                val y = o.optInt("y", 0)
+                val w = o.optInt("w", 0)
+                val h = o.optInt("h", 0)
+                elems.add(
+                    ScreenElement(
+                        id = o.optInt("id", i),
+                        type = o.optString("type", "btn"),
+                        label = o.optString("label", ""),
+                        x = x,
+                        y = y,
+                        w = w,
+                        h = h,
+                        cx = o.optInt("cx", x + w / 2),
+                        cy = o.optInt("cy", y + h / 2),
+                        checked = o.optBoolean("checked", false)
+                    )
+                )
+            }
+        }
+        return CydUiTree(
+            width = doc.optInt("w", 240),
+            height = doc.optInt("h", 320),
+            activeApp = doc.optString("active_app", "home"),
+            activeName = doc.optString("active_name", "Home"),
+            streaming = doc.optBoolean("streaming", false),
+            remoteEnabled = doc.optBoolean("remote_enabled", true),
+            keyboardOpen = doc.optBoolean("keyboard_open", false),
+            quickSettingsOpen = doc.optBoolean("quick_settings_open", false),
+            elements = elems
+        )
+    }
+
+    fun mirrorControl(enable: Boolean): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "mirror_control")
+            put("enable", enable)
+        }.toString()
+
+    fun uiTreeRequest(): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "ui_tree_request")
+        }.toString()
+
+    fun remoteInputTap(x: Int, y: Int): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "remote_input")
+            put("action", "tap")
+            put("x", x.coerceIn(0, 239))
+            put("y", y.coerceIn(0, 319))
+        }.toString()
+
+    fun remoteInputPointer(action: String, x: Int, y: Int): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "remote_input")
+            put("action", action)
+            put("x", x.coerceIn(0, 239))
+            put("y", y.coerceIn(0, 319))
+        }.toString()
+
+    fun remoteInputSwipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 220): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "remote_input")
+            put("action", "swipe")
+            put("x1", x1.coerceIn(0, 239))
+            put("y1", y1.coerceIn(0, 319))
+            put("x2", x2.coerceIn(0, 239))
+            put("y2", y2.coerceIn(0, 319))
+            put("duration_ms", durationMs)
+        }.toString()
+
+    fun remoteCmd(
+        cmd: String,
+        argKey: String? = null,
+        argStr: String? = null,
+        argInt: Int? = null
+    ): String =
+        JSONObject().apply {
+            put("v", PROTOCOL_VERSION)
+            put("type", "remote_cmd")
+            put("cmd", cmd)
+            if (!argKey.isNullOrBlank() && argStr != null) {
+                put(argKey, argStr)
+            }
+            if (argInt != null) {
+                put("value", argInt)
+            }
+        }.toString()
 }

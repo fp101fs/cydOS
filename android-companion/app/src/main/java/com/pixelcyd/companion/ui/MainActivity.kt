@@ -169,57 +169,97 @@ class MainActivity : ComponentActivity() {
             ) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val state by CompanionRepository.uiState.collectAsState()
-                    CompanionScreen(
-                        state = state,
-                        onScanCydQr = { launchQrScanner() },
-                        onToggleForwarding = { enabled ->
-                            CompanionRepository.setForwardingEnabled(applicationContext, enabled)
-                        },
-                        onOpenNotifAccess = {
-                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        },
-                        onOpenAppInfo = {
-                            startActivity(
-                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                    data = Uri.fromParts("package", packageName, null)
+                    var selectedTab by remember { mutableIntStateOf(0) }
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Top 2-tab pill switcher: Dashboard | CYD Screen
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { selectedTab = 0 },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selectedTab == 0) Color(0xFF25D366) else Color(0xFF191C24),
+                                    contentColor = if (selectedTab == 0) Color(0xFF062A14) else Color(0xFF9AA0A6)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Dashboard", fontWeight = FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = { selectedTab = 1 },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selectedTab == 1) Color(0xFF78D9EC) else Color(0xFF191C24),
+                                    contentColor = if (selectedTab == 1) Color(0xFF07234B) else Color(0xFF9AA0A6)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("CYD Screen", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        if (selectedTab == 0) {
+                            CompanionScreen(
+                                state = state,
+                                onOpenScreenMirror = { selectedTab = 1 },
+                                onScanCydQr = { launchQrScanner() },
+                                onToggleForwarding = { enabled ->
+                                    CompanionRepository.setForwardingEnabled(applicationContext, enabled)
+                                },
+                                onOpenNotifAccess = {
+                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                },
+                                onOpenAppInfo = {
+                                    startActivity(
+                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = Uri.fromParts("package", packageName, null)
+                                        }
+                                    )
+                                },
+                                onCopyToken = {
+                                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("Pairing Token", state.pairingToken))
+                                    Toast.makeText(this@MainActivity, "Pairing token copied", Toast.LENGTH_SHORT).show()
+                                },
+                                onRegenerateToken = {
+                                    CompanionRepository.regenerateToken(applicationContext)
+                                },
+                                onToggleServer = {
+                                    if (state.serverRunning) {
+                                        CompanionService.stop(applicationContext)
+                                    } else {
+                                        CompanionService.start(applicationContext)
+                                    }
+                                },
+                                onClearHistory = {
+                                    CompanionRepository.clearHistory()
+                                },
+                                onSendTestMsg = {
+                                    val now = System.currentTimeMillis()
+                                    CompanionRepository.recordNotification(
+                                        WhatsAppMessage(
+                                            id = "test_$now",
+                                            sbnKey = "test_$now",
+                                            sender = "Pixel 8 Test",
+                                            conversation = "Pixel 8 Test",
+                                            text = "Test message from Android Companion!",
+                                            timestampMs = now,
+                                            canReply = false
+                                        ),
+                                        replyAction = null
+                                    )
+                                    Toast.makeText(this@MainActivity, "Sent test message to CYD", Toast.LENGTH_SHORT).show()
                                 }
                             )
-                        },
-                        onCopyToken = {
-                            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("Pairing Token", state.pairingToken))
-                            Toast.makeText(this, "Pairing token copied", Toast.LENGTH_SHORT).show()
-                        },
-                        onRegenerateToken = {
-                            CompanionRepository.regenerateToken(applicationContext)
-                        },
-                        onToggleServer = {
-                            if (state.serverRunning) {
-                                CompanionService.stop(applicationContext)
-                            } else {
-                                CompanionService.start(applicationContext)
-                            }
-                        },
-                        onClearHistory = {
-                            CompanionRepository.clearHistory()
-                        },
-                        onSendTestMsg = {
-                            val now = System.currentTimeMillis()
-                            CompanionRepository.recordNotification(
-                                WhatsAppMessage(
-                                    id = "test_$now",
-                                    sbnKey = "test_$now",
-                                    sender = "Pixel 8 Test",
-                                    conversation = "Pixel 8 Test",
-                                    text = "Test message from Android Companion!",
-                                    timestampMs = now,
-                                    canReply = false
-                                ),
-                                replyAction = null
-                            )
-                            Toast.makeText(this, "Sent test message to CYD", Toast.LENGTH_SHORT).show()
+                        } else {
+                            CydScreenMirrorTab(companionState = state)
                         }
-                    )
+                    }
                 }
             }
         }
@@ -248,6 +288,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CompanionScreen(
     state: CompanionUiState,
+    onOpenScreenMirror: () -> Unit,
     onScanCydQr: () -> Unit,
     onToggleForwarding: (Boolean) -> Unit,
     onOpenNotifAccess: () -> Unit,
@@ -334,6 +375,19 @@ private fun CompanionScreen(
                     )
                 ) {
                     Text("Scan CYD QR Code", fontWeight = FontWeight.SemiBold)
+                }
+
+                if (state.connectedDevices > 0) {
+                    Button(
+                        onClick = onOpenScreenMirror,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF78D9EC),
+                            contentColor = Color(0xFF07234B)
+                        )
+                    ) {
+                        Text("Open Live CYD Screen & Remote Control", fontWeight = FontWeight.SemiBold)
+                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

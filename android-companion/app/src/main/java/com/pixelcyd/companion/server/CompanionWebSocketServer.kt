@@ -4,11 +4,13 @@ import android.content.Context
 import com.pixelcyd.companion.notifications.WhatsAppNotificationListener
 import com.pixelcyd.companion.protocol.CompanionProtocol
 import com.pixelcyd.companion.store.CompanionRepository
+import com.pixelcyd.companion.store.ScreenMirrorStore
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
 import org.json.JSONObject
 import java.net.InetSocketAddress
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 class CompanionWebSocketServer(
@@ -33,6 +35,9 @@ class CompanionWebSocketServer(
 
     override fun onClose(conn: WebSocket, code: Int, reason: String?, remote: Boolean) {
         val dev = authenticatedClients.remove(conn)
+        if (authenticatedClients.isEmpty()) {
+            ScreenMirrorStore.onDisconnected()
+        }
         if (dev != null) {
             CompanionRepository.updateClientCount(
                 authenticatedClients.size,
@@ -44,8 +49,18 @@ class CompanionWebSocketServer(
     override fun onError(conn: WebSocket?, ex: Exception?) {
         if (conn != null) {
             authenticatedClients.remove(conn)
+            if (authenticatedClients.isEmpty()) {
+                ScreenMirrorStore.onDisconnected()
+            }
             CompanionRepository.updateClientCount(authenticatedClients.size)
         }
+    }
+
+    override fun onMessage(conn: WebSocket, message: ByteBuffer) {
+        if (!authenticatedClients.containsKey(conn)) return
+        val bytes = ByteArray(message.remaining())
+        message.get(bytes)
+        ScreenMirrorStore.decodeBandFrame(bytes)
     }
 
     override fun onMessage(conn: WebSocket, message: String) {
@@ -99,6 +114,14 @@ class CompanionWebSocketServer(
             }
             "reply_request" -> handleReplyRequest(conn, doc)
             "dismiss_request" -> handleDismissRequest(conn, doc)
+            "ui_tree" -> ScreenMirrorStore.updateUiTree(CompanionProtocol.parseUiTree(doc))
+            "mirror_status" -> {
+                ScreenMirrorStore.updateMirrorStatus(
+                    streaming = doc.optBoolean("streaming", false),
+                    remoteEnabled = doc.optBoolean("remote_enabled", true),
+                    activeApp = doc.optString("active_app", "home")
+                )
+            }
         }
     }
 
@@ -183,14 +206,21 @@ class CompanionWebSocketServer(
         broadcastToAuthenticated(payload)
     }
 
-    private fun broadcastToAuthenticated(payload: String) {
+    fun sendToAuthenticated(payload: String): Boolean {
+        var sentAny = false
         for (client in authenticatedClients.keys) {
             if (client.isOpen) {
                 try {
                     client.send(payload)
+                    sentAny = true
                 } catch (_: Exception) {
                 }
             }
         }
+        return sentAny
+    }
+
+    private fun broadcastToAuthenticated(payload: String) {
+        sendToAuthenticated(payload)
     }
 }
