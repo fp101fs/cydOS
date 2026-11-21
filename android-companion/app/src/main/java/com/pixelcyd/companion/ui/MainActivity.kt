@@ -478,9 +478,10 @@ private fun NotificationAccessGuideModal(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (isStep1) {
                     Text(
-                        text = "1. Tap Open Settings below.\n" +
-                               "2. Turn on Pixel CYD WhatsApp Bridge.\n\n" +
-                               "If Android says \"Restricted setting\", come back and tap Next.",
+                        text = "1. Tap Open Notification Settings below.\n" +
+                               "2. Tap Pixel CYD WhatsApp Bridge.\n" +
+                               "3. Tap the \"Allow notification access\" switch — even if it looks grayed out!\n\n" +
+                               "If Android shows \"Restricted setting\", press Back and tap Next.",
                         fontSize = 14.sp,
                         lineHeight = 20.sp
                     )
@@ -496,10 +497,10 @@ private fun NotificationAccessGuideModal(
                     }
                 } else {
                     Text(
-                        text = "1. Tap Open App Info below.\n" +
-                               "2. Tap ⋮ (top right) -> Allow restricted settings.\n" +
-                               "   (On Android 15, scroll to bottom.)\n" +
-                               "3. Come back and tap Open Notification Settings.",
+                        text = "1. Make sure you tapped the grayed-out switch in Step 1 first (this unlocks the option below).\n" +
+                               "2. Tap Open App Info below.\n" +
+                               "3. Tap ⋮ (top right) -> Allow restricted settings (or scroll to bottom on Android 15).\n" +
+                               "4. Come back and tap Open Notification Settings.",
                         fontSize = 14.sp,
                         lineHeight = 20.sp
                     )
