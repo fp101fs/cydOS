@@ -4,6 +4,7 @@
 #include "../ui/status_bar.h"
 #include "../ui/nav_bar.h"
 #include "../ui/quick_settings.h"
+#include "../ui/app_manager.h"
 #include "../components/m3_keyboard.h"
 
 SystemState g_sys;
@@ -62,6 +63,7 @@ void m3ApplyThemeAll() {
     navBarRefreshTheme();
     quickSettingsRefreshTheme();
     m3KeyboardRefreshTheme();
+    appManagerRefreshTheme();
 }
 
 void m3PulseFeedback() {

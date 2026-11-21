@@ -6,6 +6,7 @@
 #include "../components/m3_keyboard.h"
 
 static lv_obj_t* s_appWin = nullptr;
+static lv_obj_t* s_appHeader = nullptr;
 static const AppMeta* s_activeMeta = nullptr;
 static bool s_closing = false;
 
@@ -19,6 +20,7 @@ static void closeAnimDoneCb(lv_anim_t* a) {
         lv_obj_del(s_appWin);
         s_appWin = nullptr;
     }
+    s_appHeader = nullptr;
     s_activeMeta = nullptr;
     s_closing = false;
 }
@@ -32,6 +34,7 @@ static void headerBackCb(lv_event_t* e) {
 
 void appManagerInit() {
     s_appWin = nullptr;
+    s_appHeader = nullptr;
     s_activeMeta = nullptr;
     s_closing = false;
 }
@@ -50,6 +53,7 @@ void appManagerLaunch(const AppMeta* meta) {
         lv_obj_del(s_appWin);
         s_appWin = nullptr;
     }
+    s_appHeader = nullptr;
     s_closing = false;
     s_activeMeta = meta;
 
@@ -67,7 +71,7 @@ void appManagerLaunch(const AppMeta* meta) {
     lv_obj_set_style_pad_all(s_appWin, 0, 0);
     lv_obj_clear_flag(s_appWin, LV_OBJ_FLAG_SCROLLABLE);
 
-    m3AppHeader(s_appWin, meta->name, meta->accentHex, headerBackCb);
+    s_appHeader = m3AppHeader(s_appWin, meta->name, meta->accentHex, headerBackCb);
 
     uint16_t bodyH = winH - M3Dim::APP_TOP_H;
     lv_obj_t* body = lv_obj_create(s_appWin);
@@ -114,6 +118,17 @@ void appManagerClose() {
 
 bool appManagerHasActiveApp() {
     return s_appWin != nullptr && !s_closing;
+}
+
+void appManagerRefreshTheme() {
+    if (!s_appWin) return;
+    lv_obj_set_style_bg_color(s_appWin, lv_color_hex(m3CurrentBgHex()), 0);
+    if (s_appHeader) {
+        m3AppHeaderRefreshTheme(s_appHeader);
+    }
+    if (s_activeMeta && s_activeMeta->themeFn && !s_closing) {
+        s_activeMeta->themeFn();
+    }
 }
 
 void appManagerLoop() {

@@ -15,6 +15,7 @@ struct AppMeta {
     void (*tickFn)();
     int16_t order;
     void (*actionFn)();
+    void (*themeFn)();
 };
 
 struct AppRegistrar {
@@ -28,9 +29,15 @@ const AppMeta* appFindById(const char* id);
 
 #define REGISTER_APP_EX(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord, action) \
     static const AppMeta s_appMeta_##varId = {                                                        \
-        idStr, nameStr, iconStr, accent, container, build, tick, ord, action                          \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, action, nullptr                 \
     };                                                                                                \
     static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)
 
 #define REGISTER_APP(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord) \
     REGISTER_APP_EX(varId, idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr)
+
+#define REGISTER_APP_THEMED(varId, idStr, nameStr, iconStr, accent, container, build, tick, theme, ord) \
+    static const AppMeta s_appMeta_##varId = {                                                           \
+        idStr, nameStr, iconStr, accent, container, build, tick, ord, nullptr, theme                     \
+    };                                                                                                   \
+    static const AppRegistrar s_appReg_##varId(&s_appMeta_##varId)

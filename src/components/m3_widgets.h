@@ -6,6 +6,7 @@
 lv_obj_t* m3Card(lv_obj_t* parent, lv_coord_t w, lv_coord_t h, lv_coord_t radius = 16);
 
 lv_obj_t* m3AppHeader(lv_obj_t* parent, const char* title, uint32_t accentHex, lv_event_cb_t backCb, void* userData = nullptr);
+void m3AppHeaderRefreshTheme(lv_obj_t* bar);
 
 lv_obj_t* m3ToggleRow(
     lv_obj_t* parent,

@@ -2,7 +2,6 @@
 #include "../theme/m3_theme.h"
 #include "../components/m3_widgets.h"
 #include "../ui/status_bar.h"
-#include "../ui/home_screen.h"
 #include "../drivers/touch_drv.h"
 
 static void setFlexCol(lv_obj_t* body) {
@@ -27,7 +26,7 @@ static void btToggleCb(lv_event_t* e) {
 static void amoledToggleCb(lv_event_t* e) {
     lv_obj_t* sw = lv_event_get_target(e);
     g_sys.amoledBg = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    homeScreenRefreshTheme();
+    m3ApplyThemeAll();
     m3ShowToast(g_sys.amoledBg ? "AMOLED Black enabled" : "Charcoal theme enabled", 1100);
 }
 

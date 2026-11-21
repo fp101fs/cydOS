@@ -57,6 +57,26 @@ lv_obj_t* m3AppHeader(lv_obj_t* parent, const char* title, uint32_t accentHex, l
     return bar;
 }
 
+void m3AppHeaderRefreshTheme(lv_obj_t* bar) {
+    if (!bar) return;
+    lv_obj_set_style_bg_color(bar, lv_color_hex(m3SurfaceHex()), 0);
+
+    lv_obj_t* backBtn = lv_obj_get_child(bar, 0);
+    if (backBtn) {
+        lv_obj_set_style_bg_color(backBtn, lv_color_hex(m3SurfaceHighHex()), 0);
+    }
+
+    lv_obj_t* lbl = lv_obj_get_child(bar, 1);
+    if (lbl) {
+        lv_obj_set_style_text_color(lbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    }
+
+    lv_obj_t* line = lv_obj_get_child(bar, 2);
+    if (line) {
+        lv_obj_set_style_bg_color(line, lv_color_hex(m3OutlineHex()), 0);
+    }
+}
+
 lv_obj_t* m3ToggleRow(
     lv_obj_t* parent,
     const char* iconSym,
