@@ -1,16 +1,10 @@
 #include "touch_drv.h"
 #include "display_drv.h"
 #include "../config/hw_config.h"
-#include "../theme/m3_theme.h"
 #include <Preferences.h>
 
-// ST7789 dual-USB CYD has XPT2046 X-axis mirrored relative to rotation(0)
-#ifdef ST7789_2_DRIVER
-static int16_t s_calX0 = 3850, s_calX1 = 220;
-#else
-static int16_t s_calX0 = 220, s_calX1 = 3850;
-#endif
-static int16_t s_calY0 = 220, s_calY1 = 3750;
+static int16_t s_calX0 = 200, s_calX1 = 3900;
+static int16_t s_calY0 = 200, s_calY1 = 3700;
 static bool s_calLoaded = false;
 static lv_indev_drv_t s_indev_drv;
 
@@ -49,7 +43,6 @@ static bool xptSample(uint16_t& x, uint16_t& y, uint16_t& z) {
     if (z < TOUCH_Z_MIN) return false;
     x = xptTransfer(0xD0);
     y = xptTransfer(0x90);
-    if (x < 30 || x > 4065 || y < 30 || y > 4065) return false;
     return true;
 }
 
@@ -73,6 +66,9 @@ bool touchReadPoint(TouchPoint& out) {
     if (x >= w) x = w - 1;
     if (y < 0) y = 0;
     if (y >= h) y = h - 1;
+
+    // Fix horizontal X mirroring observed on ST7789 portrait CYD
+    x = (w - 1) - x;
 
     out.pressed = true;
     out.x = x;
@@ -106,8 +102,8 @@ void touchInit() {
     pinMode(PIN_TOUCH_IRQ, INPUT);
 
     Preferences prefs;
-    if (prefs.begin("touch_p8", true)) {
-        if (prefs.getBool("ok", false)) {
+    if (prefs.begin("touch", true)) {
+        if (prefs.getBool("okp", false)) {
             s_calX0 = prefs.getShort("x0", s_calX0);
             s_calX1 = prefs.getShort("x1", s_calX1);
             s_calY0 = prefs.getShort("y0", s_calY0);
@@ -116,11 +112,13 @@ void touchInit() {
         }
         prefs.end();
     }
+    Serial.printf("[TOUCH] cal loaded=%d x0=%d x1=%d y0=%d y1=%d Z_MIN=%d\n",
+                  s_calLoaded ? 1 : 0, s_calX0, s_calX1, s_calY0, s_calY1, TOUCH_Z_MIN);
 
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type = LV_INDEV_TYPE_POINTER;
     s_indev_drv.read_cb = lvglTouchReadCb;
-    s_indev_drv.scroll_limit = 22;
+    s_indev_drv.scroll_limit = 20;
     lv_indev_drv_register(&s_indev_drv);
 }
 
@@ -178,18 +176,19 @@ void touchCalibrateInteractive() {
     waitTap(r1x, r1y);
     tft.fillCircle(w - 21, h - 21, 18, TFT_GREEN);
 
+    // Note: touchReadPoint mirrors X, so store raw endpoints for (w-1-x) mapping
     int32_t dx = (int32_t)r1x - (int32_t)r0x;
     int32_t dy = (int32_t)r1y - (int32_t)r0y;
-    s_calX0 = (int16_t)(r0x - (dx * 20) / (w - 41));
-    s_calX1 = (int16_t)(r1x + (dx * 20) / (w - 41));
+    s_calX1 = (int16_t)(r0x - (dx * 20) / (w - 41));
+    s_calX0 = (int16_t)(r1x + (dx * 20) / (w - 41));
     s_calY0 = (int16_t)(r0y - (dy * 20) / (h - 41));
     s_calY1 = (int16_t)(r1y + (dy * 20) / (h - 41));
     if (s_calX0 == s_calX1) s_calX1 = s_calX0 + 1;
     if (s_calY0 == s_calY1) s_calY1 = s_calY0 + 1;
 
     Preferences prefs;
-    if (prefs.begin("touch_p8", false)) {
-        prefs.putBool("ok", true);
+    if (prefs.begin("touch", false)) {
+        prefs.putBool("okp", true);
         prefs.putShort("x0", s_calX0);
         prefs.putShort("x1", s_calX1);
         prefs.putShort("y0", s_calY0);
