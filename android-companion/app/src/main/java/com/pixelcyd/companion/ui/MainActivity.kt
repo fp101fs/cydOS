@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.pixelcyd.companion.notifications.WhatsAppNotificationListener
+import com.pixelcyd.companion.protocol.CompanionProtocol.WhatsAppMessage
 import com.pixelcyd.companion.service.CompanionService
 import com.pixelcyd.companion.store.CompanionRepository
 import com.pixelcyd.companion.store.CompanionUiState
@@ -201,6 +202,22 @@ class MainActivity : ComponentActivity() {
                         },
                         onClearHistory = {
                             CompanionRepository.clearHistory()
+                        },
+                        onSendTestMsg = {
+                            val now = System.currentTimeMillis()
+                            CompanionRepository.recordNotification(
+                                WhatsAppMessage(
+                                    id = "test_$now",
+                                    sbnKey = "test_$now",
+                                    sender = "Pixel 8 Test",
+                                    conversation = "Pixel 8 Test",
+                                    text = "Test message from Android Companion!",
+                                    timestampMs = now,
+                                    canReply = false
+                                ),
+                                replyAction = null
+                            )
+                            Toast.makeText(this, "Sent test message to CYD", Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -238,7 +255,8 @@ private fun CompanionScreen(
     onCopyToken: () -> Unit,
     onRegenerateToken: () -> Unit,
     onToggleServer: () -> Unit,
-    onClearHistory: () -> Unit
+    onClearHistory: () -> Unit,
+    onSendTestMsg: () -> Unit
 ) {
     var showNotifGuide by remember { mutableStateOf(false) }
     var notifGuideStep by remember { mutableIntStateOf(0) }
@@ -430,11 +448,19 @@ private fun CompanionScreen(
                     fontSize = 12.sp,
                     color = Color(0xFF9AA0A6)
                 )
-                OutlinedButton(
-                    onClick = onClearHistory,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Clear Cached History")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onSendTestMsg,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Send Test Msg")
+                    }
+                    OutlinedButton(
+                        onClick = onClearHistory,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Clear History")
+                    }
                 }
             }
         }

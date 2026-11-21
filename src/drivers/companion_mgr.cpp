@@ -307,7 +307,8 @@ static bool wsHandshake(WiFiClient& cli, const char* host, uint16_t port) {
 }
 
 // Non-blocking poll for one frame if data is available.
-// Returns: 1 = text frame received in outBuf, 0 = no frame ready / control handled, -1 = error/closed
+// Returns: 2 = control frame (Ping/Pong) received, 1 = text frame received in outBuf,
+//          0 = no frame ready, -1 = error/closed
 static int wsPollFrame(WiFiClient& cli, char* outBuf, size_t outCap) {
     if (cli.available() < 2) return 0;
 
@@ -362,10 +363,10 @@ static int wsPollFrame(WiFiClient& cli, char* outBuf, size_t outCap) {
     }
     if (opcode == 0x09) { // Ping -> reply Pong
         wsSendFrame(cli, 0x0A, (const uint8_t*)outBuf, (size_t)payloadLen);
-        return 0;
+        return 2;
     }
     if (opcode == 0x0A) { // Pong
-        return 0;
+        return 2;
     }
     if (opcode == 0x01) { // Text
         return 1;
@@ -632,7 +633,9 @@ static void companionWorkerTask(void* param) {
             backoffMs = (backoffMs * 2 > BACKOFF_MAX_MS) ? BACKOFF_MAX_MS : (backoffMs * 2);
             continue;
         }
-        if (res == 1) {
+        if (res == 2) {
+            lastActivityMs = millis();
+        } else if (res == 1) {
             lastActivityMs = millis();
             handleIncomingJson(rxBuf, cli);
             // If auth failed, stop retrying until user updates token
