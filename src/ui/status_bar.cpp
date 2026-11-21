@@ -152,14 +152,19 @@ void statusBarRefresh() {
         }
     } else {
         lv_obj_add_flag(s_airLbl, LV_OBJ_FLAG_HIDDEN);
-        if (g_sys.wifiEnabled) lv_obj_clear_flag(s_wifiLbl, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(s_wifiLbl, LV_OBJ_FLAG_HIDDEN);
+        if (g_sys.wifiEnabled) {
+            lv_obj_clear_flag(s_wifiLbl, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_text_opa(s_wifiLbl, g_sys.wifiConnected ? LV_OPA_COVER : LV_OPA_40, 0);
+        } else {
+            lv_obj_add_flag(s_wifiLbl, LV_OBJ_FLAG_HIDDEN);
+        }
 
         if (g_sys.btEnabled) lv_obj_clear_flag(s_btLbl, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(s_btLbl, LV_OBJ_FLAG_HIDDEN);
 
+        int8_t bars = (g_sys.wifiEnabled && g_sys.wifiConnected) ? g_sys.wifiBars : 0;
         for (int i = 0; i < 4; ++i) {
-            lv_obj_set_style_bg_opa(s_cellBars[i], (i < 3) ? LV_OPA_COVER : LV_OPA_40, 0);
+            lv_obj_set_style_bg_opa(s_cellBars[i], (i < bars) ? LV_OPA_COVER : LV_OPA_20, 0);
         }
     }
 }

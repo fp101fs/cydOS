@@ -4,6 +4,7 @@
 #include "config/hw_config.h"
 #include "drivers/display_drv.h"
 #include "drivers/touch_drv.h"
+#include "drivers/wifi_mgr.h"
 #include "theme/m3_theme.h"
 #include "components/m3_keyboard.h"
 #include "ui/home_screen.h"
@@ -33,6 +34,7 @@ void setup() {
     }
 
     m3ThemeInit();
+    wifiMgrInit();
     homeScreenInit();
     appManagerInit();
     statusBarInit();
@@ -48,6 +50,11 @@ void setup() {
 
 void loop() {
     m3SyncSysTick();
+
+    if (wifiMgrTick()) {
+        statusBarRefresh();
+        if (quickSettingsIsOpen()) quickSettingsRefresh();
+    }
 
     if (g_sys.minute != s_lastMinute) {
         s_lastMinute = g_sys.minute;

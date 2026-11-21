@@ -46,8 +46,12 @@ namespace M3Dim {
 
 struct SystemState {
     bool wifiEnabled    = true;
-    char wifiSsid[32]   = "Pixel-Home-5G";
-    int8_t wifiBars     = 3;
+    bool wifiConnected  = false;
+    bool wifiConnecting = false;
+    char wifiSsid[33]   = "";
+    char wifiIp[16]     = "";
+    int8_t wifiRssi     = 0;
+    int8_t wifiBars     = 0;
 
     bool btEnabled      = true;
     char btDevice[32]   = "Pixel Buds Pro";

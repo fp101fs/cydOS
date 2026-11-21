@@ -3,6 +3,7 @@
 #include "app_manager.h"
 #include "../theme/m3_theme.h"
 #include "../drivers/display_drv.h"
+#include "../drivers/wifi_mgr.h"
 #include "../components/m3_widgets.h"
 #include <stdio.h>
 
@@ -91,8 +92,7 @@ static lv_obj_t* createQsTile(
 static void wifiTileCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
-    g_sys.wifiEnabled = !g_sys.wifiEnabled;
-    if (g_sys.wifiEnabled && g_sys.airplaneMode) g_sys.airplaneMode = false;
+    wifiMgrSetEnabled(!g_sys.wifiEnabled);
     quickSettingsRefresh();
     statusBarRefresh();
 }
@@ -109,7 +109,7 @@ static void btTileCb(lv_event_t* e) {
 static void airTileCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
-    g_sys.airplaneMode = !g_sys.airplaneMode;
+    wifiMgrSetAirplaneMode(!g_sys.airplaneMode);
     quickSettingsRefresh();
     statusBarRefresh();
 }
@@ -269,7 +269,7 @@ void quickSettingsRefresh() {
 
     bool wifiActive = g_sys.wifiEnabled && !g_sys.airplaneMode;
     styleTile(s_tileWifi, wifiActive, M3Color::PRIMARY_CONT);
-    lv_label_set_text(s_tileWifiSub, wifiActive ? g_sys.wifiSsid : "Off");
+    lv_label_set_text(s_tileWifiSub, wifiMgrStatusText());
 
     bool btActive = g_sys.btEnabled && !g_sys.airplaneMode;
     styleTile(s_tileBt, btActive, M3Color::SECONDARY_CONT);
