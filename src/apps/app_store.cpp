@@ -1242,7 +1242,10 @@ void fetchExploreCatalogNow() {
 
     s_exploreLoading = true;
     s_exploreError = "";
-    // Free cached tab vectors & old catalog before TLS handshake to maximize contiguous heap.
+    // Free LVGL card widgets & cached tab vectors before TLS handshake to maximize contiguous heap.
+    if (s_tabContent) {
+        lv_obj_clean(s_tabContent);
+    }
     std::vector<ExploreCatalogItem>().swap(s_exploreItems);
     std::vector<InstalledRowData>().swap(s_installedRows);
     std::vector<LauncherSdEntry>().swap(s_sdEntries);
@@ -1295,6 +1298,11 @@ void fetchExploreCatalogNow() {
 
     if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
         renderActiveTab();
+        Serial.printf("[EXPLORE] Rendered %u/%d items (page %u/%d) free=%lu maxBlk=%lu\n",
+                      (unsigned)s_exploreItems.size(), s_exploreTotal,
+                      (unsigned)s_explorePage, s_exploreNumPages,
+                      (unsigned long)ESP.getFreeHeap(),
+                      (unsigned long)ESP.getMaxAllocHeap());
     }
 }
 
@@ -1302,12 +1310,25 @@ void openExploreDetailNow(size_t idx) {
     if (idx >= s_exploreItems.size()) return;
     ExploreCatalogItem item = s_exploreItems[idx];
 
+    // Free LVGL catalog card widgets before TLS handshake so mbedTLS has full contiguous heap.
+    if (s_tabContent) {
+        lv_obj_clean(s_tabContent);
+    }
+    std::vector<InstalledRowData>().swap(s_installedRows);
+    std::vector<LauncherSdEntry>().swap(s_sdEntries);
+    std::vector<LauncherPartitionEntry>().swap(s_pmanEntries);
+    std::vector<ToolsBackupRow>().swap(s_backupRows);
+    g_launcherHubDoc.clear();
+
     launcherUiBeginProgress(item.name.c_str(), "Loading versions from LauncherHub...");
     String err;
     JsonDocument doc = getVersionInfo(item.fid, &err);
     launcherUiClose();
 
     if (doc.isNull() || !doc["versions"].is<JsonArray>()) {
+        if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
+            renderActiveTab();
+        }
         launcherUiError(err.isEmpty() ? String("Could not load App details") : err, "LauncherHub");
         return;
     }
@@ -1339,6 +1360,9 @@ void openExploreDetailNow(size_t idx) {
     }
 
     if (detail.versions.empty()) {
+        if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
+            renderActiveTab();
+        }
         launcherUiError("No installable versions found for this App.", detail.name.c_str());
         return;
     }
@@ -1347,6 +1371,11 @@ void openExploreDetailNow(size_t idx) {
     s_exploreDetail = detail;
     if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
         renderActiveTab();
+        Serial.printf("[EXPLORE] Rendered %u/%d items (page %u/%d) free=%lu maxBlk=%lu\n",
+                      (unsigned)s_exploreItems.size(), s_exploreTotal,
+                      (unsigned)s_explorePage, s_exploreNumPages,
+                      (unsigned long)ESP.getFreeHeap(),
+                      (unsigned long)ESP.getMaxAllocHeap());
     }
 }
 
@@ -1395,8 +1424,12 @@ void asyncDispatchExploreAction(void* arg) {
                 s_exploreDetail.selectedVersionIdx >= s_exploreDetail.versions.size()) {
                 return;
             }
-            const ExploreVersionItem& v = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx];
-            installFirmwareFromManifest(s_exploreDetail.fid, v.version, s_exploreDetail.name, false);
+            String fid = s_exploreDetail.fid;
+            String ver = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx].version;
+            String name = s_exploreDetail.name;
+            if (s_tabContent) lv_obj_clean(s_tabContent);
+            installFirmwareFromManifest(fid, ver, name, false);
+            if (s_storeBody && s_activeTab == AppStoreTab::Explore) renderActiveTab();
             break;
         }
         case PendingExploreAction::DownloadSelected: {
@@ -1404,14 +1437,21 @@ void asyncDispatchExploreAction(void* arg) {
                 s_exploreDetail.selectedVersionIdx >= s_exploreDetail.versions.size()) {
                 return;
             }
+            String fid = s_exploreDetail.fid;
             const ExploreVersionItem& v = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx];
-            String fileName = s_exploreDetail.name + "_" + v.version;
-            downloadFirmware(s_exploreDetail.fid, v.file, fileName, g_launcherDwnPath, v.version);
+            String file = v.file;
+            String ver = v.version;
+            String fileName = s_exploreDetail.name + "_" + ver;
+            if (s_tabContent) lv_obj_clean(s_tabContent);
+            downloadFirmware(fid, file, fileName, g_launcherDwnPath, ver);
+            if (s_storeBody && s_activeTab == AppStoreTab::Explore) renderActiveTab();
             break;
         }
         case PendingExploreAction::InstallUrl:
             if (!url.isEmpty()) {
+                if (s_tabContent) lv_obj_clean(s_tabContent);
                 installExtFirmware(url, false);
+                if (s_storeBody && s_activeTab == AppStoreTab::Explore) renderActiveTab();
             }
             break;
         case PendingExploreAction::ConnectWifi:

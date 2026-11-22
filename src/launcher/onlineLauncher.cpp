@@ -946,7 +946,8 @@ bool ensureWifiConnected() {
 bool GetJsonFromLauncherHub(
     uint8_t page, const String &order, bool star, const String &query, String *errorOut
 ) {
-    String q = "&order_by=" + order;
+    // Cap page_size=8 so LVGL card memory stays low (~15 KB) even on large categories like ESP32.
+    String q = "&page_size=8&order_by=" + order;
     if (page > 1) q += "&page=" + String(page);
     if (query.length() > 0) q += "&q=" + launcherEncodeQueryValue(query);
     if (star) q += "&star=1";
