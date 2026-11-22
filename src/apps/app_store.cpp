@@ -3654,7 +3654,7 @@ void buildWebUploadView(lv_obj_t* container) {
 
     lv_obj_t* urlLbl = lv_label_create(qrCard);
     lv_label_set_text(urlLbl, st.url);
-    lv_obj_set_style_text_color(urlLbl, lv_color_hex(M3Color::PRIMARY), 0);
+    lv_obj_set_style_text_color(urlLbl, lv_color_hex(m3PrimaryHex()), 0);
     lv_obj_set_style_text_font(urlLbl, &lv_font_montserrat_14, 0);
 
     char netBuf[64];
@@ -3979,6 +3979,19 @@ void storeBodyDeleteCb(lv_event_t* e) {
         launcherWebUiStop();
     }
     closeTextPromptModal();
+    s_wuiStatusLbl = nullptr;
+    s_wuiProgBar = nullptr;
+    s_wuiTransferLbl = nullptr;
+    // Release cached tab lists to return internal DRAM when leaving App Store.
+    std::vector<InstalledRowData>().swap(s_installedRows);
+    std::vector<ExploreCatalogItem>().swap(s_exploreItems);
+    std::vector<ExploreVersionItem>().swap(s_exploreDetail.versions);
+    s_exploreDetail.active = false;
+    s_exploreLoaded = false;
+    std::vector<LauncherSdEntry>().swap(s_sdEntries);
+    std::vector<LauncherPartitionEntry>().swap(s_pmanEntries);
+    std::vector<ToolsBackupRow>().swap(s_backupRows);
+    g_launcherHubDoc.clear();
     s_storeBody = nullptr;
     s_tabBar = nullptr;
     s_tabContent = nullptr;

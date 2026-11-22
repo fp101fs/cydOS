@@ -14,6 +14,7 @@
 #include "theme/m3_theme.h"
 #include "components/m3_widgets.h"
 #include "components/m3_keyboard.h"
+#include "components/m3_modal.h"
 #include "ui/home_screen.h"
 #include "ui/status_bar.h"
 #include "ui/nav_bar.h"
@@ -101,8 +102,12 @@ void loop() {
 
     bool bootDown = hwBootPressed();
     if (bootDown && !s_bootWasDown) {
-        if (m3KeyboardIsOpen()) {
+        if (m3ModalIsLocked()) {
+            // Protect active flash/partition commits from accidental dismissal.
+        } else if (m3KeyboardIsOpen()) {
             m3KeyboardHide();
+        } else if (m3ModalIsOpen()) {
+            m3ModalClose();
         } else if (quickSettingsIsOpen()) {
             quickSettingsClose();
         } else if (appManagerHasActiveApp()) {

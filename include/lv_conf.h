@@ -118,7 +118,7 @@
 #define LV_USE_BTN 1
 #define LV_USE_BTNMATRIX 1
 #define LV_USE_CANVAS 1
-#define LV_USE_CHECKBOX 1
+#define LV_USE_CHECKBOX 0
 #define LV_USE_DROPDOWN 1
 #define LV_USE_IMG 1
 #define LV_USE_LABEL 1
@@ -136,12 +136,12 @@
 #define LV_USE_CHART 1
 #define LV_USE_COLORWHEEL 0
 #define LV_USE_IMGBTN 0
-#define LV_USE_KEYBOARD 1
+#define LV_USE_KEYBOARD 0
 #define LV_USE_LED 0
-#define LV_USE_LIST 1
+#define LV_USE_LIST 0
 #define LV_USE_MENU 0
 #define LV_USE_METER 0
-#define LV_USE_MSGBOX 1
+#define LV_USE_MSGBOX 0
 #define LV_USE_SPAN 0
 #define LV_USE_SPINBOX 0
 #define LV_USE_SPINNER 1
@@ -154,7 +154,7 @@
 #define LV_THEME_DEFAULT_DARK 1
 #define LV_THEME_DEFAULT_GROW 1
 #define LV_THEME_DEFAULT_TRANSITION_TIME 80
-#define LV_USE_THEME_BASIC 1
+#define LV_USE_THEME_BASIC 0
 #define LV_USE_THEME_MONO 0
 
 /* Layouts */
