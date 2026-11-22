@@ -102,10 +102,13 @@ static bool     s_pausedWifi    = false;
 static uint8_t  s_buttonsMask   = 0;
 
 class HidServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) override {
-        (void)pServer;
+    void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override {
         s_connected = true;
-        Serial.println("[HID] Host connected");
+        if (pServer && desc) {
+            // Request low-latency 7.5..15ms BLE interval (66..133 Hz HID reports)
+            pServer->updateConnParams(desc->conn_handle, 6, 12, 0, 100);
+        }
+        Serial.println("[HID] Host connected (low-latency conn params requested)");
     }
 
     void onDisconnect(NimBLEServer* pServer) override {

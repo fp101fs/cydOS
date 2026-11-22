@@ -3,6 +3,7 @@
 #include "../components/m3_widgets.h"
 #include "../drivers/ble_hid_mgr.h"
 #include "../drivers/ble_mgr.h"
+#include "../drivers/touch_drv.h"
 #include "../ui/status_bar.h"
 #include <Arduino.h>
 #include <stdio.h>
@@ -38,14 +39,21 @@ static lv_obj_t* s_scrollThumb   = nullptr;
 static lv_obj_t* s_leftBtn       = nullptr;
 static lv_obj_t* s_rightBtn      = nullptr;
 
-// Trackpad drag / hold state (mirrors slide-to-select feel from m3_keyboard)
+// Trackpad high-rate smoothed drag state
 static bool     s_padDown        = false;
 static bool     s_padDragActive  = false;
 static int16_t  s_padStartX      = 0;
 static int16_t  s_padStartY      = 0;
-static int16_t  s_padLastX       = 0;
-static int16_t  s_padLastY       = 0;
+static float    s_smoothX        = 0.0f;
+static float    s_smoothY        = 0.0f;
+static float    s_prevSmoothX    = 0.0f;
+static float    s_prevSmoothY    = 0.0f;
+static float    s_remX           = 0.0f;
+static float    s_remY           = 0.0f;
 static uint32_t s_padDownMs      = 0;
+static uint32_t s_padLastSeenMs  = 0;
+static uint32_t s_padLastSendMs  = 0;
+static uint32_t s_reticleLastMs  = 0;
 
 // Scroll strip state
 static bool     s_scrollDown     = false;
@@ -110,53 +118,88 @@ static void updateReticlePos(int16_t absX, int16_t absY) {
     lv_obj_clear_flag(s_padReticle, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void padEventCb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    lv_indev_t* indev = lv_indev_get_act();
-    lv_point_t pt = {0, 0};
-    if (indev) lv_indev_get_point(indev, &pt);
+// High-rate (~100 Hz) smoothed touch poller for the Trackpad surface
+static void pollTrackpadSurface() {
+    if (!s_padArea || s_mode != PadMode::TRACKPAD || s_scrollDown) return;
 
-    if (code == LV_EVENT_PRESSED) {
-        s_padDown       = true;
-        s_padDragActive = false;
-        s_padStartX     = pt.x;
-        s_padStartY     = pt.y;
-        s_padLastX      = pt.x;
-        s_padLastY      = pt.y;
-        s_padDownMs     = millis();
-        updateReticlePos(pt.x, pt.y);
-    } else if (code == LV_EVENT_PRESSING && s_padDown) {
-        int16_t totalDx = pt.x - s_padStartX;
-        int16_t totalDy = pt.y - s_padStartY;
-        uint32_t heldMs = millis() - s_padDownMs;
+    lv_area_t area;
+    lv_obj_get_coords(s_padArea, &area);
+    uint32_t now = millis();
 
-        // Activate drag feedback once finger moves >=3px or holds >=65ms
-        if (!s_padDragActive && (abs(totalDx) >= 3 || abs(totalDy) >= 3 || heldMs >= 65)) {
-            s_padDragActive = true;
+    TouchPoint pt;
+    bool hitPad = touchReadLightPoint(pt) &&
+                  pt.x >= area.x1 && pt.x <= area.x2 &&
+                  pt.y >= area.y1 && pt.y <= area.y2;
+
+    if (hitPad) {
+        s_padLastSeenMs = now;
+        if (!s_padDown) {
+            s_padDown       = true;
+            s_padDragActive = true; // Instant 0ms / 0px drag activation for feather-light touch
+            s_padStartX     = pt.x;
+            s_padStartY     = pt.y;
+            s_smoothX       = (float)pt.x;
+            s_smoothY       = (float)pt.y;
+            s_prevSmoothX   = s_smoothX;
+            s_prevSmoothY   = s_smoothY;
+            s_remX          = 0.0f;
+            s_remY          = 0.0f;
+            s_padDownMs     = now;
+            s_padLastSendMs = now;
+            s_reticleLastMs = now;
             setPadVisualActive(true);
+            updateReticlePos(pt.x, pt.y);
+            return;
         }
 
-        if (s_padDragActive) {
-            updateReticlePos(pt.x, pt.y);
-            int16_t dx = pt.x - s_padLastX;
-            int16_t dy = pt.y - s_padLastY;
-            if (dx != 0 || dy != 0) {
-                // Mild non-linear acceleration for crisp precision + fast sweep
-                int32_t mag = abs(dx) + abs(dy);
-                float gain = (mag > 12) ? 2.4f : (mag > 5 ? 1.8f : 1.3f);
-                int8_t sendX = clampInt8((int32_t)lroundf(dx * gain));
-                int8_t sendY = clampInt8((int32_t)lroundf(dy * gain));
-                if (sendX != 0 || sendY != 0) {
-                    bleHidMouseMove(sendX, sendY, 0);
-                }
-                s_padLastX = pt.x;
-                s_padLastY = pt.y;
+        // Reject wild resistive pressure-lift spikes (>38px single-sample jump)
+        float jumpX = fabsf((float)pt.x - s_smoothX);
+        float jumpY = fabsf((float)pt.y - s_smoothY);
+        if (jumpX > 38.0f || jumpY > 38.0f) {
+            return;
+        }
+
+        // Low-pass EMA smoothing to remove XPT2046 jitter
+        constexpr float ALPHA = 0.45f;
+        s_smoothX = ALPHA * (float)pt.x + (1.0f - ALPHA) * s_smoothX;
+        s_smoothY = ALPHA * (float)pt.y + (1.0f - ALPHA) * s_smoothY;
+
+        if (s_padDragActive && (uint32_t)(now - s_padLastSendMs) >= 8) {
+            float dx = s_smoothX - s_prevSmoothX;
+            float dy = s_smoothY - s_prevSmoothY;
+            s_prevSmoothX = s_smoothX;
+            s_prevSmoothY = s_smoothY;
+
+            // Smooth progressive acceleration curve + sub-pixel fractional carry
+            float speed = hypotf(dx, dy);
+            float gain = 1.25f + fminf(speed * 0.16f, 1.55f);
+            s_remX += dx * gain;
+            s_remY += dy * gain;
+
+            int32_t outX = (int32_t)s_remX;
+            int32_t outY = (int32_t)s_remY;
+            if (outX != 0 || outY != 0) {
+                s_remX -= (float)outX;
+                s_remY -= (float)outY;
+                bleHidMouseMove(clampInt8(outX), clampInt8(outY), 0);
+                s_padLastSendMs = now;
             }
         }
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_padDown = false;
-        s_padDragActive = false;
-        setPadVisualActive(false);
+
+        // Throttle reticle SPI redraws to ~15 Hz so TFT flushes never stall dragging
+        if (s_padDragActive && (uint32_t)(now - s_reticleLastMs) >= 65) {
+            s_reticleLastMs = now;
+            updateReticlePos((int16_t)lroundf(s_smoothX), (int16_t)lroundf(s_smoothY));
+        }
+    } else if (s_padDown) {
+        // 35ms grace window bridges brief resistive contact micro-dropouts mid-swipe
+        if ((uint32_t)(now - s_padLastSeenMs) >= 35) {
+            s_padDown       = false;
+            s_padDragActive = false;
+            s_remX          = 0.0f;
+            s_remY          = 0.0f;
+            setPadVisualActive(false);
+        }
     }
 }
 
@@ -360,8 +403,7 @@ static void buildTrackpadView(lv_obj_t* parent) {
     lv_obj_set_style_border_color(s_padArea, lv_color_hex(m3OutlineHex()), 0);
     lv_obj_set_style_pad_all(s_padArea, 0, 0);
     lv_obj_clear_flag(s_padArea, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_padArea, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_padArea, padEventCb, LV_EVENT_ALL, nullptr);
+    lv_obj_clear_flag(s_padArea, LV_OBJ_FLAG_CLICKABLE);
 
     s_padStatusLbl = lv_label_create(s_padArea);
     lv_label_set_text(s_padStatusLbl, "Hold & drag to move");
@@ -675,6 +717,8 @@ static void buildAppTrackpad(lv_obj_t* body) {
 
 static void tickAppTrackpad() {
     if (!s_body) return;
+
+    pollTrackpadSurface();
 
     if (s_deferredStart && (uint32_t)(millis() - s_openMs) >= 260) {
         s_deferredStart = false;
