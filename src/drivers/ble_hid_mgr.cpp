@@ -1,8 +1,10 @@
 #include "ble_hid_mgr.h"
 #include "ble_mgr.h"
+#include "wifi_mgr.h"
 #include "../theme/m3_theme.h"
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <string.h>
@@ -88,15 +90,16 @@ static const uint8_t s_hidReportMap[] = {
     0xC0               // End Collection
 };
 
-static NimBLEServer*         s_server       = nullptr;
-static NimBLEHIDDevice*      s_hid          = nullptr;
-static NimBLECharacteristic* s_inMouse      = nullptr;
-static NimBLECharacteristic* s_inConsumer   = nullptr;
-static NimBLECharacteristic* s_inKeyboard   = nullptr;
+static NimBLEServer*         s_server        = nullptr;
+static NimBLEHIDDevice*      s_hid           = nullptr;
+static NimBLECharacteristic* s_inMouse       = nullptr;
+static NimBLECharacteristic* s_inConsumer    = nullptr;
+static NimBLECharacteristic* s_inKeyboard    = nullptr;
 
-static bool     s_active      = false;
-static bool     s_connected   = false;
-static uint8_t  s_buttonsMask = 0;
+static bool     s_active        = false;
+static bool     s_connected     = false;
+static bool     s_pausedWifi    = false;
+static uint8_t  s_buttonsMask   = 0;
 
 class HidServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) override {
@@ -128,11 +131,36 @@ bool bleHidStart() {
         bleMgrStopScan();
     }
 
+    // On no-PSRAM ESP32, Wi-Fi STA + NimBLE Peripheral together can exceed internal DRAM.
+    // If NimBLE isn't initialized yet and free heap is tight, temporarily pause Wi-Fi so
+    // the BLE controller has plenty of RAM (automatically restored when HID stops).
     if (!NimBLEDevice::getInitialized()) {
+        uint32_t freeBefore = ESP.getFreeHeap();
+        Serial.printf("[HID] Pre-init Free Heap: %lu B (max block: %lu B)\n",
+                      (unsigned long)freeBefore, (unsigned long)ESP.getMaxAllocHeap());
+
+        if (freeBefore < 78000 && WiFi.getMode() != WIFI_OFF) {
+            Serial.println("[HID] Pausing Wi-Fi temporarily to free DRAM for BLE HID");
+            WiFi.disconnect(false);
+            WiFi.mode(WIFI_OFF);
+            g_sys.wifiConnected = false;
+            g_sys.wifiConnecting = false;
+            s_pausedWifi = true;
+            delay(80);
+            Serial.printf("[HID] Heap after Wi-Fi pause: %lu B (max block: %lu B)\n",
+                          (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
+        }
+
+        if (ESP.getFreeHeap() < 48000) {
+            Serial.println("[HID] Insufficient heap for NimBLE init");
+            return false;
+        }
+
         NimBLEDevice::init(HID_DEVICE_NAME);
     } else {
         NimBLEDevice::setDeviceName(HID_DEVICE_NAME);
     }
+
     if (!NimBLEDevice::getInitialized()) {
         Serial.println("[HID] NimBLE init failed");
         return false;
@@ -144,6 +172,7 @@ bool bleHidStart() {
 
     if (!s_server) {
         s_server = NimBLEDevice::createServer();
+        if (!s_server) return false;
         s_server->setCallbacks(&s_serverCbs);
     }
 
@@ -187,6 +216,12 @@ void bleHidStop() {
         }
     }
     Serial.println("[HID] Advertising stopped");
+
+    if (s_pausedWifi && g_sys.wifiEnabled && !g_sys.airplaneMode) {
+        s_pausedWifi = false;
+        Serial.println("[HID] Restoring Wi-Fi");
+        wifiMgrSetEnabled(true);
+    }
 }
 
 bool bleHidIsActive() {
@@ -201,9 +236,9 @@ bool bleHidIsConnected() {
 
 const char* bleHidStatusText() {
     if (!g_sys.btEnabled || g_sys.airplaneMode) return "BT Off";
-    if (!s_active) return "Off";
-    if (bleHidIsConnected()) return "Connected";
-    return "Pair Ready";
+    if (!s_active) return "Start";
+    if (bleHidIsConnected()) return "Linked";
+    return "Pairing";
 }
 
 void bleHidMouseMove(int8_t dx, int8_t dy, int8_t wheel) {

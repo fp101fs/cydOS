@@ -56,6 +56,8 @@ static float    s_scrollAccum    = 0.0f;
 // Connection UI tracking
 static bool     s_prevActive     = false;
 static bool     s_prevConnected  = false;
+static bool     s_deferredStart  = false;
+static uint32_t s_openMs         = 0;
 
 static void updateBleBadge();
 static void updateModeUi();
@@ -599,6 +601,7 @@ static void trackpadDeleteCb(lv_event_t* e) {
     s_padDown = false;
     s_padDragActive = false;
     s_scrollDown = false;
+    s_deferredStart = false;
 }
 
 static void buildAppTrackpad(lv_obj_t* body) {
@@ -609,10 +612,9 @@ static void buildAppTrackpad(lv_obj_t* body) {
     lv_obj_set_style_pad_row(body, 6, 0);
     lv_obj_add_event_cb(body, trackpadDeleteCb, LV_EVENT_DELETE, nullptr);
 
-    // Auto-start BLE HID advertising if Bluetooth is enabled
-    if (g_sys.btEnabled && !g_sys.airplaneMode && !bleHidIsActive()) {
-        bleHidStart();
-    }
+    // Defer BLE HID startup until after the app window finishes animating in
+    s_deferredStart = (g_sys.btEnabled && !g_sys.airplaneMode && !bleHidIsActive());
+    s_openMs = millis();
 
     // Top bar: Mode selector (Trackpad / Remote) + BLE Status badge
     lv_obj_t* topRow = lv_obj_create(body);
@@ -683,6 +685,18 @@ static void buildAppTrackpad(lv_obj_t* body) {
 
 static void tickAppTrackpad() {
     if (!s_body) return;
+
+    if (s_deferredStart && (uint32_t)(millis() - s_openMs) >= 260) {
+        s_deferredStart = false;
+        if (bleHidStart()) {
+            m3ShowToast("Pair: Pixel CYD Remote", 1500);
+        } else {
+            m3ShowToast("Tap Start to pair BLE", 1300);
+        }
+        statusBarRefresh();
+        updateBleBadge();
+    }
+
     bool act  = bleHidIsActive();
     bool conn = bleHidIsConnected();
     if (act != s_prevActive || conn != s_prevConnected) {

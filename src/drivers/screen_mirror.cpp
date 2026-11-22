@@ -91,18 +91,19 @@ static void mirrorFlushHook(const lv_area_t* area, const lv_color_t* color_p) {
     int32_t srcW = x2 - x1 + 1;
     uint16_t dirtyMask = 0;
 
-    int32_t syStart = (y1 & 1) ? (y1 + 1) : y1;
-    int32_t sxStart = (x1 & 1) ? (x1 + 1) : x1;
+    // 3x3 subsampling (240x320 -> 80x108)
+    int32_t syStart = y1 + ((3 - (y1 % 3)) % 3);
+    int32_t sxStart = x1 + ((3 - (x1 % 3)) % 3);
 
-    for (int32_t sy = syStart; sy <= y2; sy += 2) {
-        int32_t dy = sy >> 1;
+    for (int32_t sy = syStart; sy <= y2; sy += 3) {
+        int32_t dy = sy / 3;
         if (dy < 0 || dy >= MIRROR_H) continue;
 
         const lv_color_t* srcRow = color_p + (sy - y1) * srcW;
         uint16_t* dstRow = s_fb + dy * MIRROR_W;
 
-        for (int32_t sx = sxStart; sx <= x2; sx += 2) {
-            int32_t dx = sx >> 1;
+        for (int32_t sx = sxStart; sx <= x2; sx += 3) {
+            int32_t dx = sx / 3;
             if (dx >= 0 && dx < MIRROR_W) {
                 dstRow[dx] = srcRow[sx - x1].full;
             }
@@ -376,9 +377,13 @@ bool screenMirrorSetStreaming(bool enable) {
 
     if (enable) {
         if (!s_fb) {
+            if (ESP.getFreeHeap() < 26000) {
+                Serial.println("[MIRROR] Low heap, skipping mirror buffer alloc");
+                return false;
+            }
             s_fb = (uint16_t*)calloc(MIRROR_W * MIRROR_H, sizeof(uint16_t));
             if (!s_fb) {
-                Serial.println("[MIRROR] OOM allocating 120x160 framebuffer");
+                Serial.println("[MIRROR] OOM allocating 80x108 framebuffer");
                 return false;
             }
         }

@@ -16,11 +16,11 @@ data class ScreenMirrorUiState(
 )
 
 object ScreenMirrorStore {
-    const val MIRROR_W = 120
-    const val MIRROR_H = 160
+    private var mirrorW = 80
+    private var mirrorH = 108
 
     private val lock = Any()
-    private val pixels = IntArray(MIRROR_W * MIRROR_H) { 0xFF0F1117.toInt() }
+    private var pixels = IntArray(mirrorW * mirrorH) { 0xFF0F1117.toInt() }
     private var frameGen = 0L
     private var bandsReceived = 0L
 
@@ -37,16 +37,24 @@ object ScreenMirrorStore {
         val yOffset = (data[6].toInt() and 0xFF) or ((data[7].toInt() and 0xFF) shl 8)
         val bandH = (data[8].toInt() and 0xFF) or ((data[9].toInt() and 0xFF) shl 8)
 
-        if (width != MIRROR_W || yOffset < 0 || bandH <= 0 || yOffset + bandH > MIRROR_H) return
+        if (width <= 0 || width > 240 || yOffset < 0 || bandH <= 0 || yOffset + bandH > 320) return
 
         val totalPx = width * bandH
-        val startOffset = yOffset * MIRROR_W
 
         val snapshot: Bitmap
         val nextGen: Long
         val nextBands: Long
 
         synchronized(lock) {
+            val expectedH = if (width == 80) 108 else if (width == 120) 160 else maxOf(mirrorH, yOffset + bandH)
+            if (width != mirrorW || expectedH != mirrorH) {
+                mirrorW = width
+                mirrorH = expectedH
+                pixels = IntArray(mirrorW * mirrorH) { 0xFF0F1117.toInt() }
+            }
+            if (yOffset + bandH > mirrorH) return
+            val startOffset = yOffset * mirrorW
+
             var pos = 10
             var pxOut = 0
             while (pxOut < totalPx && pos < data.size) {
@@ -75,7 +83,7 @@ object ScreenMirrorStore {
             bandsReceived++
             nextGen = frameGen
             nextBands = bandsReceived
-            snapshot = Bitmap.createBitmap(pixels, MIRROR_W, MIRROR_H, Bitmap.Config.ARGB_8888)
+            snapshot = Bitmap.createBitmap(pixels, mirrorW, mirrorH, Bitmap.Config.ARGB_8888)
         }
 
         _state.value = _state.value.copy(

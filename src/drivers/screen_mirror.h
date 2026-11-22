@@ -3,11 +3,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// 2x2 downsampled mirror framebuffer: 120x160 RGB565 (38.4 KB, lazily allocated)
-static constexpr uint16_t MIRROR_W          = 120;
-static constexpr uint16_t MIRROR_H          = 160;
-static constexpr uint16_t MIRROR_BAND_H     = 16;
-static constexpr uint8_t  MIRROR_BAND_COUNT = MIRROR_H / MIRROR_BAND_H; // 10 bands
+// 3x3 downsampled mirror framebuffer: 80x108 RGB565 (17.2 KB, lazily allocated)
+static constexpr uint16_t MIRROR_W          = 80;
+static constexpr uint16_t MIRROR_H          = 108;
+static constexpr uint16_t MIRROR_BAND_H     = 12;
+static constexpr uint8_t  MIRROR_BAND_COUNT = MIRROR_H / MIRROR_BAND_H; // 9 bands
 
 void screenMirrorInit();
 void screenMirrorTick(); // Call from main loop (LVGL thread)
