@@ -20,6 +20,109 @@ AppStoreTab appStoreTabFromIndex(int index) {
     return AppStoreTab::Tools;
 }
 
+const char* appStoreSortLabel(AppStoreSort sort) {
+    switch (sort) {
+        case AppStoreSort::Popular: return "Popular";
+        case AppStoreSort::Recent:  return "Recent";
+        case AppStoreSort::Name:    return "A-Z";
+        case AppStoreSort::Starred: return "Starred";
+        default:                    return "Popular";
+    }
+}
+
+const char* appStoreSortApiOrder(AppStoreSort sort) {
+    switch (sort) {
+        case AppStoreSort::Popular: return "downloads";
+        case AppStoreSort::Recent:  return "published_at";
+        case AppStoreSort::Name:    return "name";
+        case AppStoreSort::Starred: return "downloads";
+        default:                    return "downloads";
+    }
+}
+
+bool appStoreSortStarOnly(AppStoreSort sort) {
+    return sort == AppStoreSort::Starred;
+}
+
+AppStoreSort appStoreSortFromIndex(int index) {
+    if (index <= 0) return AppStoreSort::Popular;
+    if (index == 1) return AppStoreSort::Recent;
+    if (index == 2) return AppStoreSort::Name;
+    return AppStoreSort::Starred;
+}
+
+void appStoreFormatPageLabel(uint8_t page, int totalPages, int totalItems, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    int safePages = totalPages < 1 ? 1 : totalPages;
+    int safePage = page < 1 ? 1 : page;
+    if (safePage > safePages) safePage = safePages;
+    if (totalItems > 0) {
+        snprintf(out, outSize, "Page %d/%d (%d)", safePage, safePages, totalItems);
+    } else {
+        snprintf(out, outSize, "Page %d/%d", safePage, safePages);
+    }
+}
+
+void appStoreFormatVersionMeta(uint32_t appSizeBytes,
+                               uint32_t fileSizeBytes,
+                               const char* publishedAt,
+                               bool hasData,
+                               char* out,
+                               size_t outSize) {
+    if (!out || outSize == 0) return;
+    out[0] = '\0';
+    size_t pos = 0;
+
+    uint32_t shownBytes = appSizeBytes > 0 ? appSizeBytes : fileSizeBytes;
+    if (shownBytes > 0) {
+        char sz[24];
+        appStoreFormatSizeCompact(shownBytes, sz, sizeof(sz));
+        int w = snprintf(out, outSize, "%s", sz);
+        if (w > 0) pos = static_cast<size_t>(w) < outSize ? static_cast<size_t>(w) : outSize - 1;
+    }
+
+    if (publishedAt && publishedAt[0] && pos < outSize) {
+        int w = snprintf(out + pos, outSize - pos, "%s%.10s", pos > 0 ? " • " : "", publishedAt);
+        if (w > 0) pos += static_cast<size_t>(w);
+        if (pos >= outSize) pos = outSize - 1;
+    }
+
+    if (hasData && pos < outSize) {
+        snprintf(out + pos, outSize - pos, "%s+Data", pos > 0 ? " • " : "");
+    }
+
+    if (out[0] == '\0') {
+        snprintf(out, outSize, "Ready to install");
+    }
+}
+
+bool appStoreIsValidInstallUrl(const char* url) {
+    if (!url) return false;
+    while (*url == ' ' || *url == '\t' || *url == '\r' || *url == '\n') ++url;
+    size_t prefixLen = 0;
+    if (strncmp(url, "https://", 8) == 0) {
+        prefixLen = 8;
+    } else if (strncmp(url, "http://", 7) == 0) {
+        prefixLen = 7;
+    } else {
+        return false;
+    }
+    const char* rest = url + prefixLen;
+    size_t len = strlen(rest);
+    while (len > 0 && (rest[len - 1] == ' ' || rest[len - 1] == '\t' ||
+                       rest[len - 1] == '\r' || rest[len - 1] == '\n')) {
+        --len;
+    }
+    if (len < 3) return false;
+    bool hasDotOrColon = false;
+    for (size_t i = 0; i < len; ++i) {
+        char c = rest[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return false;
+        if (c == '.' || c == ':') hasDotOrColon = true;
+    }
+    return hasDotOrColon;
+}
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount) {
@@ -79,7 +182,9 @@ void appStoreFormatInstalledMeta(uint32_t appSizeBytes,
 
 #include "app_registry.h"
 #include "../theme/m3_theme.h"
+#include "../components/m3_keyboard.h"
 #include "../components/m3_widgets.h"
+#include "../drivers/wifi_mgr.h"
 #include "../ui/app_manager.h"
 #include "../launcher/backup_manager.h"
 #include "../launcher/install_shared.h"
@@ -90,6 +195,7 @@ void appStoreFormatInstalledMeta(uint32_t appSizeBytes,
 #include "../launcher/partition_table_model.h"
 #include "../launcher/sd_functions.h"
 #include <esp_ota_ops.h>
+#include <functional>
 #include <vector>
 
 namespace {
@@ -132,8 +238,71 @@ PendingAppAction s_pendingAction = PendingAppAction::None;
 char s_pendingLabel[16] = {};
 char s_pendingName[24] = {};
 
+// --- Explore Tab State ---
+struct ExploreCatalogItem {
+    String fid;
+    String name;
+    String author;
+    String version;
+    String file;
+    bool starred = false;
+};
+
+struct ExploreVersionItem {
+    String version;
+    String file;
+    String publishedAt;
+    uint32_t fileSize = 0;
+    uint32_t appSize = 0;
+    uint32_t appOffset = 0;
+    bool hasData = false;
+};
+
+struct ExploreDetailState {
+    bool active = false;
+    String fid;
+    String name;
+    String author;
+    String category;
+    bool starred = false;
+    std::vector<ExploreVersionItem> versions;
+    size_t selectedVersionIdx = 0;
+};
+
+enum class PendingExploreAction : uint8_t {
+    None = 0,
+    FetchCatalog,
+    OpenDetail,
+    PickVersion,
+    InstallSelected,
+    DownloadSelected,
+    InstallUrl,
+    ConnectWifi
+};
+
+AppStoreSort s_exploreSort = AppStoreSort::Popular;
+String s_exploreQuery;
+uint8_t s_explorePage = 1;
+int s_exploreNumPages = 1;
+int s_exploreTotal = 0;
+bool s_exploreLoaded = false;
+bool s_exploreLoading = false;
+String s_exploreError;
+std::vector<ExploreCatalogItem> s_exploreItems;
+ExploreDetailState s_exploreDetail;
+
+PendingExploreAction s_pendingExploreAction = PendingExploreAction::None;
+size_t s_pendingExploreItemIdx = 0;
+String s_pendingExploreUrl;
+
+// Reusable m3_keyboard text prompt modal (Search Apps / Install from URL)
+lv_obj_t* s_promptBackdrop = nullptr;
+lv_obj_t* s_promptTa = nullptr;
+std::function<void(const char*)> s_promptOnSubmit;
+
 void renderActiveTab();
 void updateTabBarStyle();
+void queueExploreAction(PendingExploreAction action, size_t itemIdx = 0, const char* url = nullptr);
 
 AppStoreStorageSummary computeLiveStorageSummary(const LauncherPartitionTable* tableOpt, uint8_t installedCount) {
     LauncherPartitionTable localTable;
@@ -414,7 +583,13 @@ void switchTabBtnCb(lv_event_t* e) {
     m3PulseFeedback();
     int idx = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
     AppStoreTab next = appStoreTabFromIndex(idx);
-    if (next == s_activeTab) return;
+    if (next == s_activeTab) {
+        if (next == AppStoreTab::Explore && s_exploreDetail.active) {
+            s_exploreDetail.active = false;
+            renderActiveTab();
+        }
+        return;
+    }
     s_activeTab = next;
     updateTabBarStyle();
     renderActiveTab();
@@ -675,44 +850,836 @@ void buildInstalledTab(lv_obj_t* container) {
     }
 }
 
-void buildExplorePlaceholderTab(lv_obj_t* container) {
-    lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+// --- Reusable m3_keyboard Prompt Modal (Explore Search & Install from URL) ---
+
+void closeTextPromptModal() {
+    m3KeyboardHide();
+    if (s_promptBackdrop) {
+        lv_obj_del(s_promptBackdrop);
+        s_promptBackdrop = nullptr;
+    }
+    s_promptTa = nullptr;
+    s_promptOnSubmit = nullptr;
+}
+
+void submitTextPrompt(const char* raw) {
+    auto cb = s_promptOnSubmit;
+    String val(raw ? raw : "");
+    closeTextPromptModal();
+    if (cb) cb(val.c_str());
+}
+
+void textPromptKbdEnterCb(const char* text) {
+    submitTextPrompt(text);
+}
+
+void textPromptConfirmBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    const char* txt = s_promptTa ? lv_textarea_get_text(s_promptTa) : "";
+    submitTextPrompt(txt);
+}
+
+void textPromptCancelBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    closeTextPromptModal();
+}
+
+void openTextPromptModal(const char* title,
+                         const char* placeholder,
+                         const char* initialText,
+                         uint16_t maxLen,
+                         const char* confirmLabel,
+                         std::function<void(const char*)> onSubmit) {
+    closeTextPromptModal();
+    s_promptOnSubmit = std::move(onSubmit);
+
+    lv_obj_t* top = lv_layer_top();
+    s_promptBackdrop = lv_obj_create(top);
+    lv_obj_set_size(s_promptBackdrop, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
+    lv_obj_set_pos(s_promptBackdrop, 0, 0);
+    lv_obj_set_style_bg_color(s_promptBackdrop, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_promptBackdrop, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_promptBackdrop, 0, 0);
+    lv_obj_set_style_radius(s_promptBackdrop, 0, 0);
+    lv_obj_set_style_pad_all(s_promptBackdrop, 0, 0);
+    lv_obj_clear_flag(s_promptBackdrop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_promptBackdrop, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* card = lv_obj_create(s_promptBackdrop);
+    lv_obj_set_size(card, 216, LV_SIZE_CONTENT);
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_set_style_bg_color(card, lv_color_hex(m3SurfaceHighHex()), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(m3OutlineHex()), 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_set_style_pad_row(card, 8, 0);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 6, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* title = lv_label_create(card);
-    lv_label_set_text(title, LV_SYMBOL_WIFI "  Explore LauncherHub");
-    lv_obj_set_style_text_color(title, lv_color_hex(m3PrimaryHex()), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_t* titleLbl = lv_label_create(card);
+    lv_label_set_text(titleLbl, title ? title : "Input");
+    lv_obj_set_style_text_color(titleLbl, lv_color_hex(m3PrimaryHex()), 0);
+    lv_obj_set_style_text_font(titleLbl, &lv_font_montserrat_14, 0);
 
-    char statusBuf[96];
-    if (g_sys.wifiConnected) {
-        snprintf(statusBuf, sizeof(statusBuf), "Wi-Fi: %s  •  Tag: %s",
-                 g_sys.wifiSsid[0] ? g_sys.wifiSsid : "Connected",
-                 g_launcherOtaTag.c_str());
-    } else {
-        snprintf(statusBuf, sizeof(statusBuf), "Wi-Fi offline  •  Tag: %s",
-                 g_launcherOtaTag.c_str());
+    s_promptTa = lv_textarea_create(card);
+    lv_obj_set_width(s_promptTa, LV_PCT(100));
+    lv_textarea_set_one_line(s_promptTa, true);
+    lv_textarea_set_max_length(s_promptTa, maxLen);
+    if (placeholder && placeholder[0]) lv_textarea_set_placeholder_text(s_promptTa, placeholder);
+    if (initialText && initialText[0]) lv_textarea_set_text(s_promptTa, initialText);
+    lv_obj_set_style_bg_color(s_promptTa, lv_color_hex(m3SurfaceHex()), 0);
+    lv_obj_set_style_text_color(s_promptTa, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_border_color(s_promptTa, lv_color_hex(m3PrimaryHex()), 0);
+    lv_obj_set_style_border_width(s_promptTa, 1, 0);
+    lv_obj_set_style_radius(s_promptTa, 10, 0);
+    lv_obj_set_style_text_font(s_promptTa, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* cancelBtn = m3PillBtn(row, "Cancel", m3SurfaceHighestHex(), m3TextPrimaryHex(), 68, 28);
+    lv_obj_add_event_cb(cancelBtn, textPromptCancelBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* okBtn = m3PillBtn(row, confirmLabel ? confirmLabel : "OK",
+                                M3Color::PRIMARY, M3Color::ON_PRIMARY, 76, 28);
+    lv_obj_add_event_cb(okBtn, textPromptConfirmBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    m3KeyboardShow(s_promptTa, textPromptKbdEnterCb);
+}
+
+// --- Explore Tab Logic (LauncherHub Catalog, Detail, Version Picker, URL Install) ---
+
+void fetchExploreCatalogNow() {
+    if (s_exploreLoading) return;
+    if (!launcherIsWifiConnected()) {
+        s_exploreError = "Wi-Fi not connected";
+        s_exploreLoaded = false;
+        if (s_storeBody && s_activeTab == AppStoreTab::Explore) renderActiveTab();
+        return;
     }
 
-    lv_obj_t* sub = lv_label_create(card);
-    lv_label_set_text(sub, statusBuf);
-    lv_obj_set_width(sub, LV_PCT(100));
-    lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(sub, lv_color_hex(m3TextSecondaryHex()), 0);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+    s_exploreLoading = true;
+    s_exploreError = "";
 
-    lv_obj_t* hint = lv_label_create(card);
-    lv_label_set_text(hint, "Online App catalog, search, version picker, and OTA install are wired in Items 7 & 8.");
-    lv_obj_set_width(hint, LV_PCT(100));
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(hint, lv_color_hex(m3TextSecondaryHex()), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    String stepMsg = s_exploreQuery.isEmpty()
+                         ? (String("Loading ") + appStoreSortLabel(s_exploreSort) + " Apps...")
+                         : (String("Searching \"") + s_exploreQuery + "\"...");
+    launcherUiBeginProgress("Explore", stepMsg.c_str());
 
-    if (!g_sys.wifiConnected) {
-        lv_obj_t* wifiBtn = m3PillBtn(card, LV_SYMBOL_WIFI "  Connect Wi-Fi",
-                                      M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 32);
-        lv_obj_add_event_cb(wifiBtn, openWifiSettingsCb, LV_EVENT_CLICKED, nullptr);
+    String err;
+    bool ok = GetJsonFromLauncherHub(
+        s_explorePage,
+        String(appStoreSortApiOrder(s_exploreSort)),
+        appStoreSortStarOnly(s_exploreSort),
+        s_exploreQuery,
+        &err
+    );
+    launcherUiClose();
+
+    s_exploreLoading = false;
+    s_exploreItems.clear();
+
+    if (ok) {
+        JsonArray items = g_launcherHubDoc["items"].as<JsonArray>();
+        for (JsonObject it : items) {
+            ExploreCatalogItem row;
+            row.fid = it["fid"].is<const char*>() ? String(it["fid"].as<const char*>()) : String();
+            row.name = it["name"].is<const char*>() ? String(it["name"].as<const char*>()) : String("Unnamed App");
+            row.author = it["author"].is<const char*>() ? String(it["author"].as<const char*>()) : String("Community");
+            row.version = it["version"].is<const char*>() ? String(it["version"].as<const char*>()) : String();
+            row.file = it["file"].is<const char*>() ? String(it["file"].as<const char*>()) : String();
+            row.starred = (it["star"] | 0) != 0;
+            if (!row.fid.isEmpty()) {
+                s_exploreItems.push_back(row);
+            }
+        }
+        s_exploreTotal = g_launcherTotalFirmware;
+        s_exploreNumPages = g_launcherNumPages < 1 ? 1 : g_launcherNumPages;
+        s_explorePage = g_launcherCurrentPage < 1 ? 1 : g_launcherCurrentPage;
+        s_exploreLoaded = true;
+        s_exploreError = "";
+        g_launcherHubDoc.clear();
+    } else {
+        s_exploreLoaded = true;
+        s_exploreError = err.isEmpty() ? String("Could not load LauncherHub catalog") : err;
+    }
+
+    if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
+        renderActiveTab();
+    }
+}
+
+void openExploreDetailNow(size_t idx) {
+    if (idx >= s_exploreItems.size()) return;
+    ExploreCatalogItem item = s_exploreItems[idx];
+
+    launcherUiBeginProgress(item.name.c_str(), "Loading versions from LauncherHub...");
+    String err;
+    JsonDocument doc = getVersionInfo(item.fid, &err);
+    launcherUiClose();
+
+    if (doc.isNull() || !doc["versions"].is<JsonArray>()) {
+        launcherUiError(err.isEmpty() ? String("Could not load App details") : err, "LauncherHub");
+        return;
+    }
+
+    ExploreDetailState detail;
+    detail.active = true;
+    detail.fid = doc["fid"].is<const char*>() ? String(doc["fid"].as<const char*>()) : item.fid;
+    detail.name = doc["name"].is<const char*>() ? String(doc["name"].as<const char*>()) : item.name;
+    detail.author = doc["author"].is<const char*>() ? String(doc["author"].as<const char*>()) : item.author;
+    detail.category = doc["category"].is<const char*>() ? String(doc["category"].as<const char*>()) : g_launcherOtaTag;
+    detail.starred = (doc["star"] | (item.starred ? 1 : 0)) != 0;
+
+    JsonArray versions = doc["versions"].as<JsonArray>();
+    for (JsonObject v : versions) {
+        ExploreVersionItem vi;
+        vi.version = v["version"].is<const char*>() ? String(v["version"].as<const char*>()) : String();
+        vi.file = v["file"].is<const char*>() ? String(v["file"].as<const char*>()) : String();
+        vi.publishedAt = v["published_at"].is<const char*>() ? String(v["published_at"].as<const char*>()) : String();
+        vi.fileSize = v["Fs"] | 0u;
+        vi.appSize = v["as"] | 0u;
+        vi.appOffset = v["ao"] | 0u;
+        uint32_t sVal = v["s"] | 0u;
+        uint32_t fVal = v["f"] | 0u;
+        uint32_t f2Val = v["f2"] | 0u;
+        vi.hasData = (sVal > 0u || fVal > 0u || f2Val > 0u);
+        if (!vi.version.isEmpty() || !vi.file.isEmpty()) {
+            detail.versions.push_back(vi);
+        }
+    }
+
+    if (detail.versions.empty()) {
+        launcherUiError("No installable versions found for this App.", detail.name.c_str());
+        return;
+    }
+
+    detail.selectedVersionIdx = 0;
+    s_exploreDetail = detail;
+    if (s_storeBody && s_activeTab == AppStoreTab::Explore) {
+        renderActiveTab();
+    }
+}
+
+void pickExploreVersionNow() {
+    if (!s_exploreDetail.active || s_exploreDetail.versions.empty()) return;
+    std::vector<LauncherUiOption> opts;
+    opts.reserve(s_exploreDetail.versions.size());
+    for (size_t i = 0; i < s_exploreDetail.versions.size(); ++i) {
+        const ExploreVersionItem& v = s_exploreDetail.versions[i];
+        char metaBuf[64];
+        appStoreFormatVersionMeta(v.appSize, v.fileSize, v.publishedAt.c_str(), v.hasData,
+                                  metaBuf, sizeof(metaBuf));
+        String label = (i == s_exploreDetail.selectedVersionIdx ? String(LV_SYMBOL_OK "  ") : String("")) +
+                       "v" + v.version + "  (" + metaBuf + ")";
+        opts.push_back({label, [i]() {
+            s_exploreDetail.selectedVersionIdx = i;
+        }});
+    }
+    int chosen = launcherUiSelectOption("Select Version", opts, s_exploreDetail.name.c_str());
+    if (chosen >= 0 && s_storeBody && s_activeTab == AppStoreTab::Explore) {
+        renderActiveTab();
+    }
+}
+
+void asyncDispatchExploreAction(void* arg) {
+    (void)arg;
+    PendingExploreAction action = s_pendingExploreAction;
+    size_t idx = s_pendingExploreItemIdx;
+    String url = s_pendingExploreUrl;
+    s_pendingExploreAction = PendingExploreAction::None;
+    s_pendingExploreItemIdx = 0;
+    s_pendingExploreUrl = "";
+
+    switch (action) {
+        case PendingExploreAction::FetchCatalog:
+            fetchExploreCatalogNow();
+            break;
+        case PendingExploreAction::OpenDetail:
+            openExploreDetailNow(idx);
+            break;
+        case PendingExploreAction::PickVersion:
+            pickExploreVersionNow();
+            break;
+        case PendingExploreAction::InstallSelected: {
+            if (!s_exploreDetail.active ||
+                s_exploreDetail.selectedVersionIdx >= s_exploreDetail.versions.size()) {
+                return;
+            }
+            const ExploreVersionItem& v = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx];
+            installFirmwareFromManifest(s_exploreDetail.fid, v.version, s_exploreDetail.name, false);
+            break;
+        }
+        case PendingExploreAction::DownloadSelected: {
+            if (!s_exploreDetail.active ||
+                s_exploreDetail.selectedVersionIdx >= s_exploreDetail.versions.size()) {
+                return;
+            }
+            const ExploreVersionItem& v = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx];
+            String fileName = s_exploreDetail.name + "_" + v.version;
+            downloadFirmware(s_exploreDetail.fid, v.file, fileName, g_launcherDwnPath, v.version);
+            break;
+        }
+        case PendingExploreAction::InstallUrl:
+            if (!url.isEmpty()) {
+                installExtFirmware(url, false);
+            }
+            break;
+        case PendingExploreAction::ConnectWifi:
+            if (ensureWifiConnected()) {
+                s_exploreLoaded = false;
+                s_exploreError = "";
+                fetchExploreCatalogNow();
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void queueExploreAction(PendingExploreAction action, size_t itemIdx, const char* url) {
+    s_pendingExploreAction = action;
+    s_pendingExploreItemIdx = itemIdx;
+    s_pendingExploreUrl = url ? String(url) : String();
+    lv_async_call(asyncDispatchExploreAction, nullptr);
+}
+
+void exploreSortChipCb(lv_event_t* e) {
+    m3PulseFeedback();
+    int idx = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    AppStoreSort next = appStoreSortFromIndex(idx);
+    if (next == s_exploreSort && s_exploreLoaded && s_exploreError.isEmpty()) return;
+    s_exploreSort = next;
+    s_explorePage = 1;
+    s_exploreLoaded = false;
+    s_exploreError = "";
+    renderActiveTab();
+    queueExploreAction(PendingExploreAction::FetchCatalog);
+}
+
+void exploreSearchBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    openTextPromptModal("Search Apps", "e.g. Bruce, Marauder...", s_exploreQuery.c_str(), 48, "Search",
+                        [](const char* text) {
+                            String q(text ? text : "");
+                            q.trim();
+                            s_exploreQuery = q;
+                            s_explorePage = 1;
+                            s_exploreLoaded = false;
+                            s_exploreError = "";
+                            if (s_storeBody && s_activeTab == AppStoreTab::Explore) renderActiveTab();
+                            queueExploreAction(PendingExploreAction::FetchCatalog);
+                        });
+}
+
+void exploreClearSearchCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    s_exploreQuery = "";
+    s_explorePage = 1;
+    s_exploreLoaded = false;
+    s_exploreError = "";
+    renderActiveTab();
+    queueExploreAction(PendingExploreAction::FetchCatalog);
+}
+
+void exploreUrlBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    openTextPromptModal("Install from URL", "https://.../app.bin", "https://", 180, "Install",
+                        [](const char* text) {
+                            String u(text ? text : "");
+                            u.trim();
+                            if (!appStoreIsValidInstallUrl(u.c_str())) {
+                                launcherUiError("Enter a valid http:// or https:// .bin URL.", "Invalid URL");
+                                return;
+                            }
+                            queueExploreAction(PendingExploreAction::InstallUrl, 0, u.c_str());
+                        });
+}
+
+void exploreItemCardCb(lv_event_t* e) {
+    m3PulseFeedback();
+    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (idx >= s_exploreItems.size()) return;
+    queueExploreAction(PendingExploreAction::OpenDetail, idx);
+}
+
+void explorePageBtnCb(lv_event_t* e) {
+    m3PulseFeedback();
+    int delta = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    int target = static_cast<int>(s_explorePage) + delta;
+    if (target < 1) target = 1;
+    if (target > s_exploreNumPages) target = s_exploreNumPages;
+    if (target == static_cast<int>(s_explorePage)) return;
+    s_explorePage = static_cast<uint8_t>(target);
+    s_exploreLoaded = false;
+    s_exploreError = "";
+    renderActiveTab();
+    queueExploreAction(PendingExploreAction::FetchCatalog);
+}
+
+void exploreRetryBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    s_exploreLoaded = false;
+    s_exploreError = "";
+    renderActiveTab();
+    queueExploreAction(PendingExploreAction::FetchCatalog);
+}
+
+void exploreConnectWifiBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    if (wifiMgrHasSavedCreds()) {
+        queueExploreAction(PendingExploreAction::ConnectWifi);
+    } else {
+        appManagerLaunchById("wifi");
+    }
+}
+
+void exploreDetailBackCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    s_exploreDetail.active = false;
+    renderActiveTab();
+}
+
+void explorePickVersionCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueExploreAction(PendingExploreAction::PickVersion);
+}
+
+void exploreInstallSelectedCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueExploreAction(PendingExploreAction::InstallSelected);
+}
+
+void exploreDownloadSelectedCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueExploreAction(PendingExploreAction::DownloadSelected);
+}
+
+void buildExploreDetailView(lv_obj_t* container) {
+    // 1. Back bar + device tag
+    lv_obj_t* navRow = lv_obj_create(container);
+    lv_obj_set_size(navRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(navRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(navRow, 0, 0);
+    lv_obj_set_style_pad_all(navRow, 0, 0);
+    lv_obj_set_flex_flow(navRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(navRow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(navRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* backBtn = m3PillBtn(navRow, LV_SYMBOL_LEFT " Explore",
+                                  m3SurfaceHighestHex(), m3TextPrimaryHex(), 86, 26);
+    lv_obj_add_event_cb(backBtn, exploreDetailBackCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* tagLbl = lv_label_create(navRow);
+    lv_label_set_text(tagLbl, s_exploreDetail.category.c_str());
+    lv_obj_set_style_text_color(tagLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(tagLbl, &lv_font_montserrat_10, 0);
+
+    // 2. Hero App card
+    uint32_t accentHex = M3Color::PRIMARY;
+    uint32_t containerHex = 0x2563EB;
+    launcherHomePickColors(s_exploreDetail.fid.c_str(), &accentHex, &containerHex);
+
+    lv_obj_t* hero = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+    lv_obj_set_style_pad_all(hero, 10, 0);
+    lv_obj_set_style_pad_column(hero, 10, 0);
+    lv_obj_set_flex_flow(hero, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hero, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* badge = lv_obj_create(hero);
+    lv_obj_set_size(badge, 38, 38);
+    lv_obj_set_style_radius(badge, 12, 0);
+    lv_obj_set_style_bg_color(badge, lv_color_hex(containerHex), 0);
+    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(badge, 0, 0);
+    lv_obj_set_style_pad_all(badge, 0, 0);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* badgeIco = lv_label_create(badge);
+    lv_label_set_text(badgeIco, LV_SYMBOL_DOWNLOAD);
+    lv_obj_set_style_text_color(badgeIco, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(badgeIco, &lv_font_montserrat_16, 0);
+    lv_obj_center(badgeIco);
+
+    lv_obj_t* heroCol = lv_obj_create(hero);
+    lv_obj_set_height(heroCol, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(heroCol, 1);
+    lv_obj_set_style_bg_opa(heroCol, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(heroCol, 0, 0);
+    lv_obj_set_style_pad_all(heroCol, 0, 0);
+    lv_obj_set_style_pad_row(heroCol, 2, 0);
+    lv_obj_set_flex_flow(heroCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(heroCol, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* nameLbl = lv_label_create(heroCol);
+    lv_label_set_text(nameLbl, s_exploreDetail.name.c_str());
+    lv_obj_set_width(nameLbl, LV_PCT(100));
+    lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(nameLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+
+    String authorStr = String("by ") + s_exploreDetail.author;
+    if (s_exploreDetail.starred) authorStr += "  •  Featured";
+    lv_obj_t* authorLbl = lv_label_create(heroCol);
+    lv_label_set_text(authorLbl, authorStr.c_str());
+    lv_obj_set_width(authorLbl, LV_PCT(100));
+    lv_label_set_long_mode(authorLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(authorLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(authorLbl, &lv_font_montserrat_10, 0);
+
+    // 3. Version Picker Card
+    if (s_exploreDetail.selectedVersionIdx >= s_exploreDetail.versions.size()) {
+        s_exploreDetail.selectedVersionIdx = 0;
+    }
+    const ExploreVersionItem& ver = s_exploreDetail.versions[s_exploreDetail.selectedVersionIdx];
+
+    lv_obj_t* verCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(verCard, 9, 0);
+    lv_obj_set_style_pad_row(verCard, 5, 0);
+    lv_obj_set_flex_flow(verCard, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* verTop = lv_obj_create(verCard);
+    lv_obj_set_size(verTop, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(verTop, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(verTop, 0, 0);
+    lv_obj_set_style_pad_all(verTop, 0, 0);
+    lv_obj_set_flex_flow(verTop, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(verTop, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(verTop, LV_OBJ_FLAG_SCROLLABLE);
+
+    String verTitle = String("Version ") + (ver.version.isEmpty() ? "Latest" : ver.version);
+    lv_obj_t* verLbl = lv_label_create(verTop);
+    lv_label_set_text(verLbl, verTitle.c_str());
+    lv_obj_set_style_text_color(verLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(verLbl, &lv_font_montserrat_12, 0);
+
+    if (s_exploreDetail.versions.size() > 1) {
+        char pickBuf[24];
+        snprintf(pickBuf, sizeof(pickBuf), "Pick (%u)", (unsigned)s_exploreDetail.versions.size());
+        lv_obj_t* pickBtn = m3PillBtn(verTop, pickBuf, M3Color::PRIMARY_CONT, M3Color::PRIMARY, 68, 24);
+        lv_obj_add_event_cb(pickBtn, explorePickVersionCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    char metaBuf[64];
+    appStoreFormatVersionMeta(ver.appSize, ver.fileSize, ver.publishedAt.c_str(), ver.hasData,
+                              metaBuf, sizeof(metaBuf));
+    lv_obj_t* verMeta = lv_label_create(verCard);
+    lv_label_set_text(verMeta, metaBuf);
+    lv_obj_set_width(verMeta, LV_PCT(100));
+    lv_label_set_long_mode(verMeta, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(verMeta, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(verMeta, &lv_font_montserrat_10, 0);
+
+    // 4. Primary Install & Download to SD actions
+    lv_obj_t* installBtn = m3PillBtn(container, LV_SYMBOL_DOWNLOAD "  Install App",
+                                     M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 34);
+    lv_obj_add_event_cb(installBtn, exploreInstallSelectedCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* sdBtn = m3PillBtn(container, LV_SYMBOL_SD_CARD "  Download to SD",
+                                M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 32);
+    lv_obj_add_event_cb(sdBtn, exploreDownloadSelectedCb, LV_EVENT_CLICKED, nullptr);
+}
+
+void buildExploreTab(lv_obj_t* container) {
+    if (s_exploreDetail.active) {
+        buildExploreDetailView(container);
+        return;
+    }
+
+    // 1. Wi-Fi offline state
+    if (!launcherIsWifiConnected()) {
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(card, 12, 0);
+        lv_obj_set_style_pad_row(card, 6, 0);
+
+        lv_obj_t* ico = lv_label_create(card);
+        lv_label_set_text(ico, LV_SYMBOL_WIFI);
+        lv_obj_set_style_text_color(ico, lv_color_hex(m3PrimaryHex()), 0);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_28, 0);
+
+        lv_obj_t* title = lv_label_create(card);
+        lv_label_set_text(title, "Connect to Browse Apps");
+        lv_obj_set_style_text_color(title, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+
+        char subBuf[80];
+        snprintf(subBuf, sizeof(subBuf), "LauncherHub requires Wi-Fi (Tag: %s).", g_launcherOtaTag.c_str());
+        lv_obj_t* sub = lv_label_create(card);
+        lv_label_set_text(sub, subBuf);
+        lv_obj_set_width(sub, LV_PCT(100));
+        lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(sub, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* wifiBtn = m3PillBtn(card,
+                                      wifiMgrHasSavedCreds() ? LV_SYMBOL_WIFI "  Reconnect Wi-Fi"
+                                                             : LV_SYMBOL_WIFI "  Open Wi-Fi Settings",
+                                      M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 32);
+        lv_obj_add_event_cb(wifiBtn, exploreConnectWifiBtnCb, LV_EVENT_CLICKED, nullptr);
+
+        if (wifiMgrHasSavedCreds()) {
+            lv_obj_t* settingsBtn = m3PillBtn(card, LV_SYMBOL_SETTINGS "  Wi-Fi Settings",
+                                              m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 28);
+            lv_obj_add_event_cb(settingsBtn, openWifiSettingsCb, LV_EVENT_CLICKED, nullptr);
+        }
+        return;
+    }
+
+    // 2. Search pill + Install from URL button
+    lv_obj_t* searchRow = lv_obj_create(container);
+    lv_obj_set_size(searchRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(searchRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(searchRow, 0, 0);
+    lv_obj_set_style_pad_all(searchRow, 0, 0);
+    lv_obj_set_style_pad_column(searchRow, 5, 0);
+    lv_obj_set_flex_flow(searchRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(searchRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(searchRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* searchBtn = lv_btn_create(searchRow);
+    lv_obj_set_height(searchBtn, 28);
+    lv_obj_set_flex_grow(searchBtn, 1);
+    lv_obj_set_style_bg_color(searchBtn, lv_color_hex(m3SurfaceHighHex()), 0);
+    lv_obj_set_style_bg_opa(searchBtn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(searchBtn, 1, 0);
+    lv_obj_set_style_border_color(searchBtn, lv_color_hex(s_exploreQuery.isEmpty() ? m3OutlineHex() : m3PrimaryHex()), 0);
+    lv_obj_set_style_radius(searchBtn, M3Dim::RADIUS_PILL, 0);
+    lv_obj_set_style_shadow_width(searchBtn, 0, 0);
+    lv_obj_set_style_pad_hor(searchBtn, 8, 0);
+    lv_obj_set_style_pad_ver(searchBtn, 0, 0);
+    lv_obj_add_event_cb(searchBtn, exploreSearchBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* searchLbl = lv_label_create(searchBtn);
+    String searchTxt = s_exploreQuery.isEmpty()
+                           ? String(LV_SYMBOL_EYE_OPEN " Search Apps...")
+                           : (String(LV_SYMBOL_EYE_OPEN " ") + s_exploreQuery);
+    lv_label_set_text(searchLbl, searchTxt.c_str());
+    lv_obj_set_width(searchLbl, LV_PCT(100));
+    lv_label_set_long_mode(searchLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(searchLbl, lv_color_hex(s_exploreQuery.isEmpty() ? m3TextSecondaryHex() : m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(searchLbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(searchLbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    if (!s_exploreQuery.isEmpty()) {
+        lv_obj_t* clearBtn = m3PillBtn(searchRow, LV_SYMBOL_CLOSE, m3SurfaceHighestHex(), m3TextPrimaryHex(), 26, 28);
+        lv_obj_add_event_cb(clearBtn, exploreClearSearchCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    lv_obj_t* urlBtn = m3PillBtn(searchRow, LV_SYMBOL_PLUS " URL", M3Color::PRIMARY_CONT, M3Color::PRIMARY, 54, 28);
+    lv_obj_add_event_cb(urlBtn, exploreUrlBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    // 3. Sort chips row (Popular | Recent | A-Z | Starred)
+    lv_obj_t* sortRow = lv_obj_create(container);
+    lv_obj_set_size(sortRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(sortRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sortRow, 0, 0);
+    lv_obj_set_style_pad_all(sortRow, 0, 0);
+    lv_obj_set_style_pad_column(sortRow, 4, 0);
+    lv_obj_set_flex_flow(sortRow, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(sortRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (uint8_t i = 0; i < static_cast<uint8_t>(AppStoreSort::Count); ++i) {
+        AppStoreSort s = static_cast<AppStoreSort>(i);
+        bool active = (s == s_exploreSort);
+        createCompactChip(sortRow,
+                          appStoreSortLabel(s),
+                          active ? M3Color::PRIMARY_CONT : m3SurfaceHighestHex(),
+                          active ? M3Color::PRIMARY : m3TextSecondaryHex(),
+                          exploreSortChipCb,
+                          reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+    }
+
+    // 4. Auto-fetch on first visit
+    if (!s_exploreLoaded && !s_exploreLoading && s_exploreError.isEmpty()) {
+        lv_obj_t* loadCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_flex_flow(loadCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(loadCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(loadCard, 12, 0);
+
+        lv_obj_t* lbl = lv_label_create(loadCard);
+        lv_label_set_text(lbl, "Connecting to LauncherHub...");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+
+        queueExploreAction(PendingExploreAction::FetchCatalog);
+        return;
+    }
+
+    // 5. Error state
+    if (!s_exploreError.isEmpty()) {
+        lv_obj_t* errCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_flex_flow(errCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(errCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(errCard, 10, 0);
+        lv_obj_set_style_pad_row(errCard, 6, 0);
+
+        lv_obj_t* errLbl = lv_label_create(errCard);
+        lv_label_set_text(errLbl, s_exploreError.c_str());
+        lv_obj_set_width(errLbl, LV_PCT(100));
+        lv_label_set_long_mode(errLbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(errLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(errLbl, lv_color_hex(M3Color::CORAL), 0);
+        lv_obj_set_style_text_font(errLbl, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* retryBtn = m3PillBtn(errCard, LV_SYMBOL_REFRESH "  Retry",
+                                       M3Color::PRIMARY_CONT, M3Color::PRIMARY, 110, 28);
+        lv_obj_add_event_cb(retryBtn, exploreRetryBtnCb, LV_EVENT_CLICKED, nullptr);
+        return;
+    }
+
+    // 6. Empty state
+    if (s_exploreItems.empty()) {
+        lv_obj_t* emptyCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_flex_flow(emptyCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(emptyCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(emptyCard, 12, 0);
+        lv_obj_set_style_pad_row(emptyCard, 6, 0);
+
+        lv_obj_t* eLbl = lv_label_create(emptyCard);
+        lv_label_set_text(eLbl, s_exploreQuery.isEmpty() ? "No Apps found for this filter."
+                                                         : "No Apps match your search.");
+        lv_obj_set_width(eLbl, LV_PCT(100));
+        lv_label_set_long_mode(eLbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(eLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(eLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(eLbl, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* actBtn = m3PillBtn(emptyCard,
+                                     s_exploreQuery.isEmpty() ? LV_SYMBOL_REFRESH "  Refresh"
+                                                              : LV_SYMBOL_CLOSE "  Clear Search",
+                                     M3Color::PRIMARY_CONT, M3Color::PRIMARY, 120, 28);
+        lv_obj_add_event_cb(actBtn,
+                            s_exploreQuery.isEmpty() ? exploreRetryBtnCb : exploreClearSearchCb,
+                            LV_EVENT_CLICKED, nullptr);
+        return;
+    }
+
+    // 7. Material 3 App Cards
+    for (size_t i = 0; i < s_exploreItems.size(); ++i) {
+        const ExploreCatalogItem& item = s_exploreItems[i];
+        uint32_t accentHex = M3Color::PRIMARY;
+        uint32_t containerHex = 0x2563EB;
+        launcherHomePickColors(item.fid.c_str(), &accentHex, &containerHex);
+
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_style_pad_all(card, 8, 0);
+        lv_obj_set_style_pad_column(card, 8, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, exploreItemCardCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+
+        lv_obj_t* badge = lv_obj_create(card);
+        lv_obj_set_size(badge, 28, 28);
+        lv_obj_set_style_radius(badge, 9, 0);
+        lv_obj_set_style_bg_color(badge, lv_color_hex(containerHex), 0);
+        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(badge, 0, 0);
+        lv_obj_set_style_pad_all(badge, 0, 0);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* badgeIco = lv_label_create(badge);
+        lv_label_set_text(badgeIco, item.starred ? LV_SYMBOL_OK : LV_SYMBOL_DOWNLOAD);
+        lv_obj_set_style_text_color(badgeIco, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(badgeIco, &lv_font_montserrat_12, 0);
+        lv_obj_center(badgeIco);
+
+        lv_obj_t* textCol = lv_obj_create(card);
+        lv_obj_set_height(textCol, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(textCol, 1);
+        lv_obj_set_style_bg_opa(textCol, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(textCol, 0, 0);
+        lv_obj_set_style_pad_all(textCol, 0, 0);
+        lv_obj_set_style_pad_row(textCol, 1, 0);
+        lv_obj_set_flex_flow(textCol, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(textCol, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(textCol, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* nameLbl = lv_label_create(textCol);
+        lv_label_set_text(nameLbl, item.name.c_str());
+        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(nameLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_14, 0);
+
+        String subTxt = String("by ") + item.author;
+        if (item.starred) subTxt += "  •  Featured";
+        lv_obj_t* subLbl = lv_label_create(textCol);
+        lv_label_set_text(subLbl, subTxt.c_str());
+        lv_obj_set_width(subLbl, LV_PCT(100));
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(subLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* chev = lv_label_create(card);
+        lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(chev, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(chev, &lv_font_montserrat_10, 0);
+    }
+
+    // 8. Pagination bar
+    lv_obj_t* pageRow = lv_obj_create(container);
+    lv_obj_set_size(pageRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(pageRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pageRow, 0, 0);
+    lv_obj_set_style_pad_all(pageRow, 0, 0);
+    lv_obj_set_style_pad_top(pageRow, 2, 0);
+    lv_obj_set_flex_flow(pageRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(pageRow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(pageRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    bool canPrev = s_explorePage > 1;
+    bool canNext = static_cast<int>(s_explorePage) < s_exploreNumPages;
+
+    lv_obj_t* prevBtn = m3PillBtn(pageRow, LV_SYMBOL_LEFT " Prev",
+                                  canPrev ? M3Color::PRIMARY_CONT : m3SurfaceHighestHex(),
+                                  canPrev ? M3Color::PRIMARY : m3TextSecondaryHex(), 58, 26);
+    if (canPrev) {
+        lv_obj_add_event_cb(prevBtn, explorePageBtnCb, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(-1)));
+    } else {
+        lv_obj_set_style_opa(prevBtn, LV_OPA_50, 0);
+    }
+
+    char pageBuf[32];
+    appStoreFormatPageLabel(s_explorePage, s_exploreNumPages, s_exploreTotal, pageBuf, sizeof(pageBuf));
+    lv_obj_t* pageLbl = lv_label_create(pageRow);
+    lv_label_set_text(pageLbl, pageBuf);
+    lv_obj_set_style_text_color(pageLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(pageLbl, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* nextBtn = m3PillBtn(pageRow, "Next " LV_SYMBOL_RIGHT,
+                                  canNext ? M3Color::PRIMARY_CONT : m3SurfaceHighestHex(),
+                                  canNext ? M3Color::PRIMARY : m3TextSecondaryHex(), 58, 26);
+    if (canNext) {
+        lv_obj_add_event_cb(nextBtn, explorePageBtnCb, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(1)));
+    } else {
+        lv_obj_set_style_opa(nextBtn, LV_OPA_50, 0);
     }
 }
 
@@ -808,7 +1775,7 @@ void renderActiveTab() {
 
     switch (s_activeTab) {
         case AppStoreTab::Explore:
-            buildExplorePlaceholderTab(s_tabContent);
+            buildExploreTab(s_tabContent);
             break;
         case AppStoreTab::SdCard:
             buildSdCardPlaceholderTab(s_tabContent);
@@ -827,6 +1794,7 @@ void renderActiveTab() {
 
 void storeBodyDeleteCb(lv_event_t* e) {
     (void)e;
+    closeTextPromptModal();
     s_storeBody = nullptr;
     s_tabBar = nullptr;
     s_tabContent = nullptr;

@@ -12,6 +12,14 @@ enum class AppStoreTab : uint8_t {
     Count = 4
 };
 
+enum class AppStoreSort : uint8_t {
+    Popular = 0,
+    Recent = 1,
+    Name = 2,
+    Starred = 3,
+    Count = 4
+};
+
 struct AppStoreStorageSummary {
     uint32_t dynamicTotalBytes = 0;
     uint32_t usedBytes = 0;
@@ -23,6 +31,20 @@ struct AppStoreStorageSummary {
 // Pure helpers (host-testable without ESP32/LVGL)
 const char* appStoreTabLabel(AppStoreTab tab);
 AppStoreTab appStoreTabFromIndex(int index);
+
+const char* appStoreSortLabel(AppStoreSort sort);
+const char* appStoreSortApiOrder(AppStoreSort sort);
+bool appStoreSortStarOnly(AppStoreSort sort);
+AppStoreSort appStoreSortFromIndex(int index);
+
+void appStoreFormatPageLabel(uint8_t page, int totalPages, int totalItems, char* out, size_t outSize);
+void appStoreFormatVersionMeta(uint32_t appSizeBytes,
+                               uint32_t fileSizeBytes,
+                               const char* publishedAt,
+                               bool hasData,
+                               char* out,
+                               size_t outSize);
+bool appStoreIsValidInstallUrl(const char* url);
 
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,

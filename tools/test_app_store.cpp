@@ -82,11 +82,60 @@ static void testInstalledMetaFormatting() {
     assert(strcmp(buf, "896 KB • Boot") == 0);
 }
 
+static void testExploreHelpers() {
+    assert(strcmp(appStoreSortLabel(AppStoreSort::Popular), "Popular") == 0);
+    assert(strcmp(appStoreSortLabel(AppStoreSort::Recent), "Recent") == 0);
+    assert(strcmp(appStoreSortLabel(AppStoreSort::Name), "A-Z") == 0);
+    assert(strcmp(appStoreSortLabel(AppStoreSort::Starred), "Starred") == 0);
+
+    assert(strcmp(appStoreSortApiOrder(AppStoreSort::Popular), "downloads") == 0);
+    assert(strcmp(appStoreSortApiOrder(AppStoreSort::Recent), "published_at") == 0);
+    assert(strcmp(appStoreSortApiOrder(AppStoreSort::Name), "name") == 0);
+    assert(strcmp(appStoreSortApiOrder(AppStoreSort::Starred), "downloads") == 0);
+
+    assert(!appStoreSortStarOnly(AppStoreSort::Popular));
+    assert(!appStoreSortStarOnly(AppStoreSort::Recent));
+    assert(!appStoreSortStarOnly(AppStoreSort::Name));
+    assert(appStoreSortStarOnly(AppStoreSort::Starred));
+
+    assert(appStoreSortFromIndex(-1) == AppStoreSort::Popular);
+    assert(appStoreSortFromIndex(0) == AppStoreSort::Popular);
+    assert(appStoreSortFromIndex(1) == AppStoreSort::Recent);
+    assert(appStoreSortFromIndex(2) == AppStoreSort::Name);
+    assert(appStoreSortFromIndex(3) == AppStoreSort::Starred);
+    assert(appStoreSortFromIndex(99) == AppStoreSort::Starred);
+
+    char buf[64];
+    appStoreFormatPageLabel(1, 3, 42, buf, sizeof(buf));
+    assert(strcmp(buf, "Page 1/3 (42)") == 0);
+    appStoreFormatPageLabel(5, 2, 0, buf, sizeof(buf));
+    assert(strcmp(buf, "Page 2/2") == 0);
+    appStoreFormatPageLabel(0, 0, 10, buf, sizeof(buf));
+    assert(strcmp(buf, "Page 1/1 (10)") == 0);
+
+    appStoreFormatVersionMeta(1339872u, 1405408u, "2026-11-06T12:00:00Z", false, buf, sizeof(buf));
+    assert(strcmp(buf, "1.3 MB • 2026-11-06") == 0);
+    appStoreFormatVersionMeta(0u, 524288u, "2026-10-01", true, buf, sizeof(buf));
+    assert(strcmp(buf, "512 KB • 2026-10-01 • +Data") == 0);
+    appStoreFormatVersionMeta(0u, 0u, nullptr, false, buf, sizeof(buf));
+    assert(strcmp(buf, "Ready to install") == 0);
+
+    assert(appStoreIsValidInstallUrl("https://example.com/app.bin"));
+    assert(appStoreIsValidInstallUrl("  http://192.168.1.50:8080/fw.bin  "));
+    assert(!appStoreIsValidInstallUrl(""));
+    assert(!appStoreIsValidInstallUrl(nullptr));
+    assert(!appStoreIsValidInstallUrl("ftp://example.com/app.bin"));
+    assert(!appStoreIsValidInstallUrl("https://"));
+    assert(!appStoreIsValidInstallUrl("https://bad host/app.bin"));
+    assert(!appStoreIsValidInstallUrl("https://nodot"));
+}
+
 int main() {
     testTabs();
     testStorageSummary();
     testSizeFormatting();
     testInstalledMetaFormatting();
+    testExploreHelpers();
     printf("[OK] test_app_store: all assertions passed\n");
     return 0;
 }
