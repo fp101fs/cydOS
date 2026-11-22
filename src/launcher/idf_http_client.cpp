@@ -149,9 +149,10 @@ bool executeRequest(
         if (code <= 0) {
             resp->status = 0;
             resp->transport_error = code;
-            launcherConsolePrintf("[HTTP] %s failed: err=%d (%s) freeHeap=%lu\n",
+            launcherConsolePrintf("[HTTP] %s failed: err=%d (%s) freeHeap=%lu maxBlk=%lu\n",
                                   currentUrl.c_str(), code, HTTPClient::errorToString(code).c_str(),
-                                  static_cast<unsigned long>(ESP.getFreeHeap()));
+                                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                                  static_cast<unsigned long>(ESP.getMaxAllocHeap()));
             http.end();
             return false;
         }

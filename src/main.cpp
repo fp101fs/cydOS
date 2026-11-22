@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <lvgl.h>
+#include <esp_bt.h>
 #include <esp_sleep.h>
 
 #include "config/hw_config.h"
@@ -28,6 +29,9 @@
 static bool s_bootWasDown = false;
 
 void setup() {
+    // Release unused Classic Bluetooth DRAM (~36 KB) while keeping BLE (NimBLE) intact.
+    esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
     Serial.begin(115200);
     delay(150);
     Serial.println("\n[BOOT] Pixel 8 CYD UI (LVGL 8.3)");
@@ -61,10 +65,11 @@ void setup() {
     navBarInit();
     quickSettingsInit();
 
-    Serial.printf("[BOOT] Ready %ux%u, Apps: %u, Free Heap: %lu B\n",
+    Serial.printf("[BOOT] Ready %ux%u, Apps: %u, Free Heap: %lu B (max block %lu B)\n",
                   displayWidth(), displayHeight(),
                   (unsigned)appGetCount(),
-                  (unsigned long)ESP.getFreeHeap());
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
 }
 
 void loop() {
