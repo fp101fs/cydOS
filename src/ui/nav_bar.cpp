@@ -102,8 +102,8 @@ static void menuBtnCb(lv_event_t* e) {
 
 static lv_obj_t* createNavSlot(lv_obj_t* parent, int16_t x, lv_event_cb_t cb) {
     lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_set_pos(btn, x, 5);
-    lv_obj_set_size(btn, 72, 44);
+    lv_obj_set_pos(btn, x, 2);
+    lv_obj_set_size(btn, 72, 34);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(M3Color::PRIMARY), LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(btn, LV_OPA_20, LV_STATE_PRESSED);

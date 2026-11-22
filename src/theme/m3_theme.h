@@ -34,7 +34,7 @@ namespace M3Color {
 
 namespace M3Dim {
     constexpr int16_t STATUS_BAR_H = 24;
-    constexpr int16_t NAV_BAR_H    = 54;
+    constexpr int16_t NAV_BAR_H    = 38;
     constexpr int16_t APP_TOP_H    = 40;
     constexpr int16_t PAD_SM       = 6;
     constexpr int16_t PAD_MD       = 10;

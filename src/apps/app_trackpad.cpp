@@ -41,10 +41,12 @@ static lv_obj_t* s_rightBtn      = nullptr;
 // Trackpad drag / hold state (mirrors slide-to-select feel from m3_keyboard)
 static bool     s_padDown        = false;
 static bool     s_padDragActive  = false;
+static bool     s_padSentMove    = false;
 static int16_t  s_padStartX      = 0;
 static int16_t  s_padStartY      = 0;
 static int16_t  s_padLastX       = 0;
 static int16_t  s_padLastY       = 0;
+static int16_t  s_padMaxTravel   = 0;
 static uint32_t s_padDownMs      = 0;
 
 // Scroll strip state
@@ -119,19 +121,23 @@ static void padEventCb(lv_event_t* e) {
     if (code == LV_EVENT_PRESSED) {
         s_padDown       = true;
         s_padDragActive = false;
+        s_padSentMove   = false;
         s_padStartX     = pt.x;
         s_padStartY     = pt.y;
         s_padLastX      = pt.x;
         s_padLastY      = pt.y;
+        s_padMaxTravel  = 0;
         s_padDownMs     = millis();
         updateReticlePos(pt.x, pt.y);
     } else if (code == LV_EVENT_PRESSING && s_padDown) {
-        int16_t totalDx = pt.x - s_padStartX;
-        int16_t totalDy = pt.y - s_padStartY;
+        int16_t totalDx = abs(pt.x - s_padStartX);
+        int16_t totalDy = abs(pt.y - s_padStartY);
+        int16_t travel  = (totalDx > totalDy) ? totalDx : totalDy;
+        if (travel > s_padMaxTravel) s_padMaxTravel = travel;
         uint32_t heldMs = millis() - s_padDownMs;
 
-        // Activate drag feedback once finger moves >3px or holds >=65ms
-        if (!s_padDragActive && (abs(totalDx) >= 3 || abs(totalDy) >= 3 || heldMs >= 65)) {
+        // Activate drag feedback once finger moves >=3px or holds >=65ms
+        if (!s_padDragActive && (travel >= 3 || heldMs >= 65)) {
             s_padDragActive = true;
             setPadVisualActive(true);
         }
@@ -147,6 +153,7 @@ static void padEventCb(lv_event_t* e) {
                 int8_t sendX = clampInt8((int32_t)lroundf(dx * gain));
                 int8_t sendY = clampInt8((int32_t)lroundf(dy * gain));
                 if (sendX != 0 || sendY != 0) {
+                    s_padSentMove = true;
                     bleHidMouseMove(sendX, sendY, 0);
                 }
                 s_padLastX = pt.x;
@@ -154,18 +161,17 @@ static void padEventCb(lv_event_t* e) {
             }
         }
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (s_padDown) {
-            int16_t totalDx = abs(pt.x - s_padStartX);
-            int16_t totalDy = abs(pt.y - s_padStartY);
+        if (s_padDown && code == LV_EVENT_RELEASED) {
             uint32_t heldMs = millis() - s_padDownMs;
-            // Quick tap without movement -> Left Click
-            if (heldMs < 200 && totalDx < 6 && totalDy < 6) {
+            // Strict intentional tap-to-click: no cursor movement sent, <=3px travel, crisp 20..140ms tap
+            if (!s_padSentMove && s_padMaxTravel <= 3 && heldMs >= 20 && heldMs <= 140) {
                 m3PulseFeedback();
                 bleHidMouseClick(BLE_MOUSE_LEFT);
             }
         }
         s_padDown = false;
         s_padDragActive = false;
+        s_padSentMove = false;
         setPadVisualActive(false);
     }
 }
