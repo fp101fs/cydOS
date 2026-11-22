@@ -34,8 +34,41 @@ void launcherUiStep(const char *stepText, int8_t pct = -1, const char *detailTex
 // Update progress from a byte counter (formats human-readable "420 KB / 1.1 MB" detail).
 void launcherUiProgressBytes(size_t current, size_t total, const char *stepText = nullptr);
 
+// Query whether a progress modal is currently open.
+bool launcherUiIsProgressOpen();
+
+// Lock an active progress modal so the user cannot cancel/dismiss during critical
+// flash commits (partition table write, boot slot update).
+void launcherUiLockProgress();
+
+// Optional action button for launcherUiFinishActions().
+struct LauncherUiFinishAction {
+    const char *label;
+    uint32_t bgHex;      // 0 = default surface highest
+    uint32_t fgHex;      // 0 = default text primary
+    void (*onClick)();
+    bool closeOnClick;
+};
+
 // Transition the active progress modal to a completed or failed state.
 void launcherUiFinish(bool success, const char *headline, const char *detail = nullptr);
+
+// Transition the active progress modal to a completed or failed state with custom buttons
+// (e.g. "Done" + "Launch Now", or "Done" + "Install Now").
+void launcherUiFinishActions(bool success,
+                             const char *headline,
+                             const char *detail,
+                             const LauncherUiFinishAction *actions,
+                             uint8_t actionCount);
+
+// Convenience helper: finish a progress modal with a secondary dismiss button ("Done")
+// and a highlighted primary action button (e.g. "Launch Now" or "Install Now").
+void launcherUiFinishWithPrimaryAction(bool success,
+                                       const char *headline,
+                                       const char *detail,
+                                       const char *primaryLabel,
+                                       void (*onPrimary)(),
+                                       const char *dismissLabel = "Done");
 
 // Show an error (transitions open progress modal to failed state, or opens an error modal).
 void launcherUiError(const String &msg, const char *title = "Error");

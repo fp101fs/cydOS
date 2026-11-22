@@ -40,6 +40,11 @@ struct String {
         return pos == std::string::npos ? -1 : static_cast<int>(pos);
     }
     String substring(size_t from) const { return String(s.substr(from)); }
+    String substring(size_t from, size_t to) const {
+        if (from >= s.size()) return String();
+        if (to > s.size()) to = s.size();
+        return String(s.substr(from, to - from));
+    }
     long toInt() const { return std::strtol(s.c_str(), nullptr, 10); }
     void trim() {
         size_t a = 0;
@@ -130,6 +135,46 @@ static uint32_t launcherFirstDataPartitionOffsetFromTable(const uint8_t *table, 
     return 0;
 }
 
+static void formatBytes(size_t bytes, char *out, size_t outSize) {
+    if (bytes >= 1024UL * 1024UL) {
+        uint32_t tenths = static_cast<uint32_t>((bytes * 10ULL) / (1024ULL * 1024ULL));
+        snprintf(out, outSize, "%lu.%lu MB",
+                 static_cast<unsigned long>(tenths / 10),
+                 static_cast<unsigned long>(tenths % 10));
+    } else if (bytes >= 1024UL) {
+        snprintf(out, outSize, "%lu KB", static_cast<unsigned long>(bytes / 1024UL));
+    } else {
+        snprintf(out, outSize, "%lu B", static_cast<unsigned long>(bytes));
+    }
+}
+
+static String launcherFormatAppInstalledDetail(const String &appName) {
+    String clean = appName;
+    clean.trim();
+    if (clean.isEmpty()) clean = "App";
+    return clean + " added to Home Screen.\nTap Launch Now to start it.";
+}
+
+static String launcherFormatDownloadSavedDetail(const String &filePath, size_t fileSizeBytes) {
+    int slash = filePath.lastIndexOf('/');
+    String name = (slash >= 0 && slash + 1 < static_cast<int>(filePath.length()))
+                      ? filePath.substring(slash + 1)
+                      : filePath;
+    String dir = (slash > 0) ? filePath.substring(0, slash + 1) : String("/");
+    if (name.isEmpty()) name = "app.bin";
+    String out = name;
+    if (fileSizeBytes > 0) {
+        char szBuf[20];
+        formatBytes(fileSizeBytes, szBuf, sizeof(szBuf));
+        out += " (";
+        out += szBuf;
+        out += ")";
+    }
+    out += "\nSaved to ";
+    out += dir;
+    return out;
+}
+
 static void writeEntry(uint8_t *dst, uint8_t type, uint8_t subtype, uint32_t offset, uint32_t size) {
     memset(dst, 0, 32);
     dst[0] = 0xAA;
@@ -190,6 +235,18 @@ int main() {
     memset(tbl + 96, 0xFF, 32);
     assert(launcherFirstDataPartitionOffsetFromTable(tbl, sizeof(tbl)) == 0);
     assert(launcherFirstDataPartitionOffsetFromTable(nullptr, 128) == 0);
+
+    // 6. Plain-English completion detail formatters (Item 8)
+    assert(launcherFormatAppInstalledDetail("Bruce") ==
+           "Bruce added to Home Screen.\nTap Launch Now to start it.");
+    assert(launcherFormatAppInstalledDetail("   ") ==
+           "App added to Home Screen.\nTap Launch Now to start it.");
+    assert(launcherFormatDownloadSavedDetail("/downloads/Bruce_1.9.bin", 1258292) ==
+           "Bruce_1.9.bin (1.2 MB)\nSaved to /downloads/");
+    assert(launcherFormatDownloadSavedDetail("/app.bin", 524288) ==
+           "app.bin (512 KB)\nSaved to /");
+    assert(launcherFormatDownloadSavedDetail("/downloads/test.bin", 0) ==
+           "test.bin\nSaved to /downloads/");
 
     printf("[OK] test_launcher_ota_sd_backup: all assertions passed\n");
     return 0;

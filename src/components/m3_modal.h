@@ -48,6 +48,10 @@ void m3ModalUpdateProgress(int8_t pct,
                            const char* detailText = nullptr,
                            bool pumpUi = true);
 
+// Lock or unlock dismissal/cancellation on an active progress modal without
+// closing and recreating it (e.g. lock once flash partition commit begins).
+void m3ModalSetProgressLocked(bool locked);
+
 // Transition an open progress modal to a completed (success) or failed (!success) state,
 // unlocking dismissal and showing action buttons (defaults to "Done" or "Close").
 // If no progress modal is open, falls back to m3ModalShow().

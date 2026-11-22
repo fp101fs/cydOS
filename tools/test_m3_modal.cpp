@@ -366,12 +366,26 @@ int main() {
     assert(!m3ModalIsOpen());
     assert(!m3ModalIsProgressOpen());
 
-    // 4. Cancellable progress modal + cancel callback
+    // 4. Cancellable progress modal + cancel callback + in-place lock transition
     s_cancelFired = 0;
     m3ModalShowProgress("Downloading...", "Fetching manifest...", 0, true, onCancelCb);
     assert(m3ModalIsOpen() && m3ModalIsProgressOpen() && !m3ModalIsLocked());
     assert(!lv_obj_has_flag(s_closeBtn, LV_OBJ_FLAG_HIDDEN));
     assert(s_cancelBtn != nullptr);
+    // Lock in-place (e.g. before writing partition table) without closing modal
+    lv_obj_t* sameCard = s_card;
+    m3ModalSetProgressLocked(true);
+    assert(s_card == sameCard);
+    assert(m3ModalIsOpen() && m3ModalIsProgressOpen() && m3ModalIsLocked());
+    assert(lv_obj_has_flag(s_closeBtn, LV_OBJ_FLAG_HIDDEN));
+    assert(s_cancelBtn == nullptr);
+    assert(s_footer->children.size() == 1 && s_footer->children[0]->text == "Please wait...");
+    clickObj(s_closeBtn);
+    assert(s_cancelFired == 0);
+    m3ModalClose();
+
+    m3ModalShowProgress("Downloading...", "Fetching manifest...", 0, true, onCancelCb);
+    assert(m3ModalIsOpen() && m3ModalIsProgressOpen() && !m3ModalIsLocked());
     clickObj(s_cancelBtn);
     assert(s_cancelFired == 1);
     assert(s_cancelBtn->state & LV_STATE_DISABLED);

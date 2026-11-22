@@ -109,9 +109,57 @@ void launcherUiProgressBytes(size_t current, size_t total, const char *stepText)
     launcherUiStep(stepText, pct, detail);
 }
 
+bool launcherUiIsProgressOpen() {
+    return m3ModalIsProgressOpen();
+}
+
+void launcherUiLockProgress() {
+    s_userOnCancel = nullptr;
+    m3ModalSetProgressLocked(true);
+}
+
 void launcherUiFinish(bool success, const char *headline, const char *detail) {
     s_userOnCancel = nullptr;
     m3ModalFinishProgress(success, headline ? headline : (success ? "Done" : "Failed"), detail);
+}
+
+void launcherUiFinishActions(bool success,
+                             const char *headline,
+                             const char *detail,
+                             const LauncherUiFinishAction *actions,
+                             uint8_t actionCount) {
+    s_userOnCancel = nullptr;
+    if (!actions || actionCount == 0) {
+        m3ModalFinishProgress(success, headline ? headline : (success ? "Done" : "Failed"), detail);
+        return;
+    }
+    M3ModalBtn btns[4];
+    uint8_t count = actionCount > 4 ? 4 : actionCount;
+    for (uint8_t i = 0; i < count; ++i) {
+        btns[i].label = actions[i].label;
+        btns[i].bgHex = actions[i].bgHex;
+        btns[i].fgHex = actions[i].fgHex;
+        btns[i].onClick = actions[i].onClick;
+        btns[i].closeOnClick = actions[i].closeOnClick;
+    }
+    m3ModalFinishProgress(success,
+                          headline ? headline : (success ? "Done" : "Failed"),
+                          detail,
+                          btns,
+                          count);
+}
+
+void launcherUiFinishWithPrimaryAction(bool success,
+                                       const char *headline,
+                                       const char *detail,
+                                       const char *primaryLabel,
+                                       void (*onPrimary)(),
+                                       const char *dismissLabel) {
+    const LauncherUiFinishAction actions[2] = {
+        {dismissLabel ? dismissLabel : "Done", 0, 0, nullptr, true},
+        {primaryLabel ? primaryLabel : "OK", M3Color::PRIMARY, 0x0F1117, onPrimary, true},
+    };
+    launcherUiFinishActions(success, headline, detail, actions, 2);
 }
 
 void launcherUiError(const String &msg, const char *title) {

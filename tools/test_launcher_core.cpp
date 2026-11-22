@@ -86,6 +86,7 @@ struct M3ModalBtn {
 struct MockModalLog {
     bool open = false;
     bool progressOpen = false;
+    bool progressLocked = false;
     bool finishSuccess = false;
     bool cancellable = false;
     int8_t lastPct = -1;
@@ -94,9 +95,12 @@ struct MockModalLog {
     std::string step;
     std::string detail;
     void (*onCancel)() = nullptr;
+    std::vector<std::string> finishBtnLabels;
+    std::vector<void (*)()> finishBtnCbs;
     int showCalls = 0;
     int showProgressCalls = 0;
     int updateCalls = 0;
+    int lockCalls = 0;
     int finishCalls = 0;
     int closeCalls = 0;
 } g_modal;
@@ -133,12 +137,30 @@ static void m3ModalUpdateProgress(int8_t pct, const char *stepText = nullptr,
     g_modal.updateCalls++;
 }
 
+static void m3ModalSetProgressLocked(bool locked) {
+    g_modal.progressLocked = locked;
+    if (locked) {
+        g_modal.cancellable = false;
+        g_modal.onCancel = nullptr;
+    }
+    g_modal.lockCalls++;
+}
+
 static void m3ModalFinishProgress(bool success, const char *headline, const char *detail = nullptr,
-                                  const M3ModalBtn * = nullptr, uint8_t = 0) {
+                                  const M3ModalBtn *btns = nullptr, uint8_t btnCount = 0) {
     g_modal.progressOpen = false;
+    g_modal.progressLocked = false;
     g_modal.finishSuccess = success;
     g_modal.title = headline ? headline : "";
     if (detail) g_modal.detail = detail;
+    g_modal.finishBtnLabels.clear();
+    g_modal.finishBtnCbs.clear();
+    if (btns && btnCount > 0) {
+        for (uint8_t i = 0; i < btnCount; ++i) {
+            g_modal.finishBtnLabels.push_back(btns[i].label ? btns[i].label : "");
+            g_modal.finishBtnCbs.push_back(btns[i].onClick);
+        }
+    }
     g_modal.finishCalls++;
 }
 
@@ -333,6 +355,9 @@ static void onAppRenamedCb(const String &appNum, const String &name) {
     g_lastRenamedName = name.c_str();
 }
 
+static int g_primaryActionFired = 0;
+static void onPrimaryActionCb() { g_primaryActionFired++; }
+
 static void testUiBridge() {
     char buf[32];
     launcherUiFormatBytes(0, buf, sizeof(buf));       assert(std::string(buf) == "0 B");
@@ -393,6 +418,25 @@ static void testUiBridge() {
     launcherUiFinish(true, "Installed!", "Bruce");
     assert(!g_modal.progressOpen);
     assert(g_modal.finishSuccess);
+
+    // Progress open query, in-place lock, and finish with primary action ("Done" + "Launch Now")
+    g_primaryActionFired = 0;
+    launcherUiBeginProgress("Installing App", "Connecting to LauncherHub...", M3Color::PRIMARY, true, onCancelCb);
+    assert(launcherUiIsProgressOpen());
+    launcherUiLockProgress();
+    assert(g_modal.progressLocked);
+    assert(g_modal.lockCalls == 1);
+    launcherUiFinishWithPrimaryAction(
+        true, "App Installed", "Bruce added to Home Screen.", "Launch Now", onPrimaryActionCb, "Done"
+    );
+    assert(!launcherUiIsProgressOpen());
+    assert(g_modal.finishSuccess);
+    assert(g_modal.finishBtnLabels.size() == 2);
+    assert(g_modal.finishBtnLabels[0] == "Done");
+    assert(g_modal.finishBtnLabels[1] == "Launch Now");
+    assert(g_modal.finishBtnCbs[1] != nullptr);
+    g_modal.finishBtnCbs[1]();
+    assert(g_primaryActionFired == 1);
 
     // Cross-module hooks
     launcherUiSetAppsChangedCb(onAppsChangedCb);

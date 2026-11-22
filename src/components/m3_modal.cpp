@@ -484,6 +484,30 @@ void m3ModalUpdateProgress(int8_t pct,
     }
 }
 
+void m3ModalSetProgressLocked(bool locked) {
+    if (!s_progressOpen) return;
+    s_progressLocked = locked;
+    if (locked) {
+        s_onCancel = nullptr;
+        if (s_closeBtn) {
+            lv_obj_add_flag(s_closeBtn, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (s_cancelBtn && s_footer) {
+            s_cancelBtn = nullptr;
+            lv_obj_clean(s_footer);
+            lv_obj_set_flex_align(s_footer, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_t* waitLbl = lv_label_create(s_footer);
+            lv_label_set_text(waitLbl, "Please wait...");
+            lv_obj_set_style_text_font(waitLbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(waitLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        }
+        lv_timer_handler();
+        s_lastPumpMs = lv_tick_get();
+    } else if (s_closeBtn) {
+        lv_obj_clear_flag(s_closeBtn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void m3ModalFinishProgress(bool success,
                            const char* headline,
                            const char* detail,

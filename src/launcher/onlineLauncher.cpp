@@ -218,6 +218,7 @@ bool flashRawRangeFromHttp(
             (response.status == 0 || (response.status >= 300 && response.status < 400))) {
             activeUrl.replace("/download?", "/proxy?");
             launcherConsolePrintf("Redirect not followed, falling back to /proxy for OTA flash\n");
+            launcherUiStep("Retrying via mirror...", -1, "");
             continue;
         }
 
@@ -324,6 +325,21 @@ String resolveDataPartitionSource(JsonObject part, JsonObject sources) {
     return launcherBuildSourceUrl(String(), url, false);
 }
 
+String s_lastInstalledLabel;
+String s_lastDownloadedPath;
+
+void launchLastInstalledAppCb() {
+    if (!s_lastInstalledLabel.isEmpty()) {
+        launcherBootAppByLabel(s_lastInstalledLabel.c_str());
+    }
+}
+
+void installLastDownloadedSdCb() {
+    if (!s_lastDownloadedPath.isEmpty()) {
+        updateFromSD(s_lastDownloadedPath, true, false);
+    }
+}
+
 bool installFirmwareDynamic(
     const String &fileAddr, const String &file, uint32_t appSize, uint32_t appPartitionSize,
     uint32_t appOffset, bool nb, std::vector<LauncherInstallDataPartition> &dataPartitions,
@@ -331,7 +347,15 @@ bool installFirmwareDynamic(
 ) {
     String error;
     LauncherPartitionTable table;
-    launcherUiBeginProgress("Installing App", "Checking storage layout...");
+    if (!launcherUiIsProgressOpen()) {
+        launcherUiBeginProgress("Installing App", "Checking storage layout...", 0, true);
+    } else {
+        launcherUiStep("Checking storage layout...", -1, "");
+    }
+    if (launcherUiIsCancelled()) {
+        launcherUiError("Install cancelled.", "Cancelled");
+        return false;
+    }
     if (!launcherPartitionReadCurrent(table, &error)) {
         launcherUiError(error.length() ? error : "Could not read partition table");
         return false;
@@ -340,10 +364,16 @@ bool installFirmwareDynamic(
     size_t updateSize = appSize;
     String hwid = wifiMacString();
     if (updateSize == 0) {
-        launcherUiStep("Checking download size...", -1);
+        launcherUiStep("Checking download size...", -1, "");
         size_t remoteSize = 0;
         if (!getRemoteFileSize(fileAddr, remoteSize, hwid.c_str())) {
-            launcherUiError("Could not determine app size");
+            launcherUiError(launcherUiIsCancelled() ? String("Install cancelled.")
+                                                    : String("Could not determine app size"),
+                            launcherUiIsCancelled() ? "Cancelled" : "Error");
+            return false;
+        }
+        if (launcherUiIsCancelled()) {
+            launcherUiError("Install cancelled.", "Cancelled");
             return false;
         }
         if (nb) {
@@ -365,28 +395,48 @@ bool installFirmwareDynamic(
     String appLabel = launcherInstallNextAppLabel(table, file, installedName);
     LauncherPartitionEntry appEntry;
 
-    launcherUiStep("Preparing flash partition...", -1);
+    launcherUiStep("Partitioning flash storage...", -1, "");
     if (!launcherSelectInstallLayout(table, appPartitionSize, appLabel, dataPartitions, appEntry, error)) {
-        launcherUiError(error.length() ? error : "Not enough flash space");
+        if (error == "Canceled") {
+            launcherUiError("Install cancelled.", "Cancelled");
+        } else {
+            launcherUiError(error.length() ? error : "Not enough flash space");
+        }
         return false;
     }
 
-    launcherUiStep("Downloading & flashing app...", 0);
+    // Reopen progress modal cleanly if launcherSelectInstallLayout showed a space-picker prompt.
+    if (!launcherUiIsProgressOpen()) {
+        launcherUiBeginProgress("Installing App", "Downloading & flashing app...", 0, true);
+    } else {
+        launcherUiStep("Downloading & flashing app...", 0, "Connecting...");
+    }
+
     {
         String appError;
         if (!flashRawRangeFromHttp(
                 fileAddr, nb ? 0 : appOffset, updateSize, appEntry, true,
                 "Downloading & flashing app...", hwid.c_str(), &appError
             )) {
-            launcherUiError(String("App install failed: ") + appError);
+            if (launcherUiIsCancelled()) {
+                launcherUiError("Install cancelled.", "Cancelled");
+            } else {
+                launcherUiError(String("App install failed: ") + appError);
+            }
             return false;
         }
     }
 
+    bool hasEmptyDataPart = false;
     for (const auto &dp : dataPartitions) {
-        if (!dp.hasEntry || dp.copySize == 0) continue;
+        if (!dp.hasEntry) continue;
+        if (dp.copySize == 0) {
+            hasEmptyDataPart = true;
+            continue;
+        }
         const char *typeStr = dp.subtype == 0x81 ? "FAT" : dp.subtype == 0x83 ? "LittleFS" : "SPIFFS";
-        String stepText = String("Installing ") + typeStr + " data...";
+        String stepText = String("Setting up ") + typeStr + " data...";
+        launcherUiStep(stepText.c_str(), 0, "Connecting...");
         const uint32_t copySize = dp.copySize > dp.entry.size ? dp.entry.size : dp.copySize;
         const String &partAddr = dp.sourceUrl.isEmpty() ? fileAddr : dp.sourceUrl;
         String dpError;
@@ -394,24 +444,37 @@ bool installFirmwareDynamic(
                 partAddr, dp.sourceOffset, copySize, dp.entry, false, stepText.c_str(), hwid.c_str(),
                 &dpError
             )) {
-            launcherUiError(String(typeStr) + " install failed: " + dpError);
+            if (launcherUiIsCancelled()) {
+                launcherUiError("Install cancelled.", "Cancelled");
+            } else {
+                launcherUiError(String(typeStr) + " setup failed: " + dpError);
+            }
             return false;
         }
     }
+    if (hasEmptyDataPart) {
+        launcherUiStep("Preparing app data partition...", -1, "");
+    }
 
-    launcherUiStep("Updating partition table...", -1);
+    // Lock modal before committing partition table & boot slot to flash.
+    launcherUiLockProgress();
+
+    launcherUiStep("Saving storage layout...", -1, "");
     if (!launcherPartitionWriteGeneratedTable(table, &error)) {
         launcherUiError(error.length() ? error : "Failed writing partition table");
         return false;
     }
 
-    launcherUiStep("Configuring boot slot...", -1);
+    launcherUiStep("Configuring boot slot...", -1, "");
     if (!launcherPartitionSetOtaBoot(table, appEntry.subtype, &error)) {
         launcherUiError(error.length() ? error : "Failed setting boot slot");
         return false;
     }
 
-    launcherUiStep("Adding app to Home Screen...", 100);
+    String shownName = installedName.isEmpty() ? launcherInstallAppDisplayName(file) : installedName;
+    if (shownName.isEmpty()) shownName = String(appEntry.label);
+
+    launcherUiStep("Adding icon to Home Screen...", 100, shownName.c_str());
     {
         std::vector<String> fatLabels;
         String registeredSpiffsLabel;
@@ -428,13 +491,16 @@ bool installFirmwareDynamic(
     launcherUiSaveState();
 
     if (rebootAfter) {
-        launcherUiStep("Restarting into app...", 100);
+        launcherUiStep("Starting app...", 100, shownName.c_str());
         launcherDelayMs(400);
         return launcherUiReboot();
     }
 
-    String shownName = installedName.isEmpty() ? launcherInstallAppDisplayName(file) : installedName;
-    launcherUiFinish(true, "App Installed", (shownName + " added to Home Screen").c_str());
+    s_lastInstalledLabel = String(appEntry.label);
+    String detail = launcherFormatAppInstalledDetail(shownName);
+    launcherUiFinishWithPrimaryAction(
+        true, "App Installed", detail.c_str(), "Launch Now", launchLastInstalledAppCb, "Done"
+    );
     return true;
 }
 
@@ -578,6 +644,7 @@ bool mergeSourceIntoFile(
             activeUrl.indexOf("/download?") >= 0) {
             activeUrl.replace("/download?", "/proxy?");
             launcherConsolePrintf("Redirect not followed, falling back to /proxy for source download\n");
+            launcherUiStep("Retrying via mirror...", -1, "");
             continue;
         }
         return false;
@@ -614,6 +681,7 @@ bool downloadSplitFirmware(
     const uint32_t blOffset = launcherBootloaderFlashOffset();
     const uint32_t partOffset = LAUNCHER_PARTITION_TABLE_OFFSET;
 
+    launcherUiStep("Creating file on SD card...", -1, "");
     File file = SD.open(filePath, FILE_WRITE);
     if (!file) {
         launcherUiError("Could not create file on SD card");
@@ -625,8 +693,9 @@ bool downloadSplitFirmware(
     if (mergedFirmware) {
         uint8_t ptable[LAUNCHER_PARTITION_TABLE_SIZE];
         memset(ptable, 0xFF, sizeof(ptable));
+        launcherUiStep("Downloading app image...", 0, "Connecting...");
         ok = mergeSourceIntoFile(
-            file, pos, 0x0, fid, fwUrl, true, "Downloading firmware...",
+            file, pos, 0x0, fid, fwUrl, true, "Downloading app image...",
             hasData ? ptable : nullptr, partOffset, sizeof(ptable)
         );
         if (ok && hasData) {
@@ -640,23 +709,28 @@ bool downloadSplitFirmware(
                 );
                 ok = false;
             } else {
+                launcherUiStep("Downloading app data...", 0, "Connecting...");
                 ok = mergeSourceIntoFile(file, pos, dataOffset, fid, dataUrl, false, "Downloading app data...");
             }
         }
     } else {
         if (ok && !blUrl.isEmpty()) {
+            launcherUiStep("Downloading bootloader...", 0, "Connecting...");
             ok = mergeSourceIntoFile(file, pos, blOffset, fid, blUrl, false, "Downloading bootloader...");
         }
         if (ok && !partUrl.isEmpty()) {
+            launcherUiStep("Downloading partition table...", 0, "Connecting...");
             ok = mergeSourceIntoFile(file, pos, partOffset, fid, partUrl, false, "Downloading partition table...");
         }
         if (ok) {
-            ok = mergeSourceIntoFile(file, pos, appOffset, fid, fwUrl, true, "Downloading firmware...");
+            launcherUiStep("Downloading app image...", 0, "Connecting...");
+            ok = mergeSourceIntoFile(file, pos, appOffset, fid, fwUrl, true, "Downloading app image...");
         }
         if (ok && hasData) {
             if (dataOffset == 0) {
                 ok = false;
             } else {
+                launcherUiStep("Downloading app data...", 0, "Connecting...");
                 ok = mergeSourceIntoFile(file, pos, dataOffset, fid, dataUrl, false, "Downloading app data...");
             }
         }
@@ -664,14 +738,27 @@ bool downloadSplitFirmware(
     file.flush();
     file.close();
 
-    if (!ok) {
+    if (!ok || launcherUiIsCancelled()) {
         SD.remove(filePath);
-        launcherUiError(launcherUiIsCancelled() ? "Download cancelled" : "Download failed");
+        launcherUiError(launcherUiIsCancelled() ? "Download cancelled." : "Download failed.",
+                        launcherUiIsCancelled() ? "Cancelled" : "Error");
         return false;
     }
 
+    launcherUiStep("Verifying SD file...", 100, "");
+    size_t finalSize = pos;
+    File checkFile = SD.open(filePath, FILE_READ);
+    if (checkFile) {
+        finalSize = checkFile.size();
+        checkFile.close();
+    }
+
     saveDownloadedFirmware(folder, fid, version);
-    launcherUiFinish(true, "Downloaded to SD", filePath.c_str());
+    s_lastDownloadedPath = filePath;
+    String detail = launcherFormatDownloadSavedDetail(filePath, finalSize);
+    launcherUiFinishWithPrimaryAction(
+        true, "Saved to SD", detail.c_str(), "Install Now", installLastDownloadedSdCb, "Done"
+    );
     return true;
 }
 } // namespace
@@ -786,6 +873,34 @@ uint32_t launcherFirstDataPartitionOffsetFromTable(const uint8_t *table, size_t 
     return 0;
 }
 
+String launcherFormatAppInstalledDetail(const String &appName) {
+    String clean = appName;
+    clean.trim();
+    if (clean.isEmpty()) clean = "App";
+    return clean + " added to Home Screen.\nTap Launch Now to start it.";
+}
+
+String launcherFormatDownloadSavedDetail(const String &filePath, size_t fileSizeBytes) {
+    int slash = filePath.lastIndexOf('/');
+    String name = (slash >= 0 && slash + 1 < static_cast<int>(filePath.length()))
+                      ? filePath.substring(slash + 1)
+                      : filePath;
+    String dir = (slash > 0) ? filePath.substring(0, slash + 1) : String("/");
+    if (name.isEmpty()) name = "app.bin";
+
+    String out = name;
+    if (fileSizeBytes > 0) {
+        char szBuf[20];
+        launcherUiFormatBytes(fileSizeBytes, szBuf, sizeof(szBuf));
+        out += " (";
+        out += szBuf;
+        out += ")";
+    }
+    out += "\nSaved to ";
+    out += dir;
+    return out;
+}
+
 bool launcherIsWifiConnected() {
     return WiFi.status() == WL_CONNECTED;
 }
@@ -864,15 +979,25 @@ bool installFirmwareFromManifest(
 ) {
     if (!ensureWifiConnected()) return false;
 
-    launcherUiBeginProgress("Installing App", "Fetching app manifest...", 0, true);
+    launcherUiBeginProgress("Installing App", "Connecting to LauncherHub...", 0, true);
     JsonDocument detail(launcherJsonAllocator());
     String serverUrl =
         "https://api.launcherhub.net/firmwares?fid=" + fid + "&version=" + launcherEncodeQueryValue(version);
     String fetchErr;
     if (!getInfo(serverUrl, detail, nullptr, nullptr, &fetchErr)) {
-        launcherUiError(fetchErr.isEmpty() ? String("Failed to fetch install manifest") : fetchErr);
+        if (launcherUiIsCancelled()) {
+            launcherUiError("Install cancelled.", "Cancelled");
+        } else {
+            launcherUiError(fetchErr.isEmpty() ? String("Failed to fetch install manifest") : fetchErr);
+        }
         return false;
     }
+    if (launcherUiIsCancelled()) {
+        launcherUiError("Install cancelled.", "Cancelled");
+        return false;
+    }
+
+    launcherUiStep("Reading app package...", -1, "");
 
     JsonObject versionObj = detail["version"].as<JsonObject>();
     JsonObject install = versionObj["install"].as<JsonObject>();
@@ -991,7 +1116,7 @@ bool installExtFirmware(const String &url, bool rebootAfter) {
     }
     if (!ensureWifiConnected()) return false;
 
-    launcherUiBeginProgress("Install from URL", "Inspecting remote binary...", 0, true);
+    launcherUiBeginProgress("Install from URL", "Connecting to server...", 0, true);
 
     size_t fileSize = 0;
     bool nb = true;
@@ -1004,13 +1129,23 @@ bool installExtFirmware(const String &url, bool rebootAfter) {
     RangeBufferContext range = {buff, sizeof(buff), 0};
     if (!launcherHttpGetRange(url.c_str(), 32768, sizeof(buff), rangeBufferCb, &range, &response) ||
         response.status != 206) {
-        launcherUiError("Could not reach binary at that URL");
+        if (launcherUiIsCancelled()) {
+            launcherUiError("Install cancelled.", "Cancelled");
+        } else {
+            launcherUiError("Could not reach binary at that URL");
+        }
+        return false;
+    }
+    if (launcherUiIsCancelled()) {
+        launcherUiError("Install cancelled.", "Cancelled");
         return false;
     }
     if (!launcherParseContentRangeTotal(response.content_range, fileSize)) {
         launcherUiError("Server did not report file size");
         return false;
     }
+
+    launcherUiStep("Inspecting app binary...", -1, "");
 
     size_t partitionSize = 0;
     size_t partitionOffset = 0x10000;
@@ -1065,9 +1200,11 @@ bool installExtFirmware(const String &url, bool rebootAfter) {
         }
     }
 
+    String extName = launcherAppNameFromFile(url);
+    if (extName.isEmpty()) extName = "External App";
     return installFirmware(
         "", url, static_cast<uint32_t>(partitionSize), static_cast<uint32_t>(partitionOffset), nb,
-        dataPartitions, "External App", true, rebootAfter
+        dataPartitions, extName, true, rebootAfter
     );
 }
 
@@ -1108,11 +1245,11 @@ bool downloadFirmware(
 ) {
     if (!ensureWifiConnected()) return false;
     if (!setupSdCard()) {
-        launcherUiError("SD card not found");
+        launcherUiError("SD card not found. Insert a FAT32 SD card and try again.", "SD Card Required");
         return false;
     }
 
-    launcherUiBeginProgress("Download to SD", "Preparing download...", 0, true);
+    launcherUiBeginProgress("Download to SD", "Connecting to server...", 0, true);
     String fileAddr = launcherBuildSourceUrl(fid, fileUrl, true);
     fileName = launcherSanitizeFilename(fileName);
 
@@ -1120,6 +1257,7 @@ bool downloadFirmware(
     if (!folder.startsWith("/")) folder = "/" + folder;
     String folderName = folder.substring(0, folder.length() - 1);
     if (folderName.length() > 1 && !SD.exists(folderName)) {
+        launcherUiStep("Preparing SD folder...", -1, folderName.c_str());
         if (!SD.mkdir(folderName)) {
             launcherUiError("Could not create folder: " + folderName);
             return false;
@@ -1128,10 +1266,15 @@ bool downloadFirmware(
     String filePath = folder + fileName + ".bin";
 
     if (!fid.isEmpty() && !version.isEmpty()) {
+        launcherUiStep("Checking app package...", -1, "");
         JsonDocument detail(launcherJsonAllocator());
         String infoUrl =
             "https://api.launcherhub.net/firmwares?fid=" + fid + "&version=" + launcherEncodeQueryValue(version);
         if (getInfo(infoUrl, detail)) {
+            if (launcherUiIsCancelled()) {
+                launcherUiError("Download cancelled.", "Cancelled");
+                return false;
+            }
             JsonObject install = detail["version"]["install"].as<JsonObject>();
             JsonObject sources = install["sources"].as<JsonObject>();
             bool hasBootAndParts = !jsonOptString(sources["bootloader"]).isEmpty() &&
@@ -1141,6 +1284,11 @@ bool downloadFirmware(
                 return downloadSplitFirmware(fid, install, filePath, folder, version);
             }
         }
+    }
+
+    if (launcherUiIsCancelled()) {
+        launcherUiError("Download cancelled.", "Cancelled");
+        return false;
     }
 
     int tries = 0;
@@ -1155,9 +1303,9 @@ bool downloadFirmware(
             return false;
         }
 
-        FileDownloadContext download = {&file, 0, 0, 0, &response, "Downloading to SD..."};
+        FileDownloadContext download = {&file, 0, 0, 0, &response, "Downloading app to SD..."};
         String hwid = wifiMacString();
-        launcherUiStep("Downloading to SD...", -1);
+        launcherUiStep("Downloading app to SD...", -1, "Connecting...");
         ok = launcherHttpGetStream(fileAddr.c_str(), fileDownloadCb, &download, &response, "HWID", hwid.c_str());
         file.flush();
         file.close();
@@ -1173,6 +1321,9 @@ bool downloadFirmware(
             if (response.status >= 300 && response.status < 400 && fileAddr.indexOf("/download?") >= 0) {
                 fileAddr.replace("/download?", "/proxy?");
                 launcherConsolePrintf("Redirect not followed, falling back to /proxy for SD download\n");
+                launcherUiStep("Retrying via mirror...", -1, "");
+            } else {
+                launcherUiStep("Retrying download...", -1, "");
             }
             continue;
         }
@@ -1183,12 +1334,18 @@ bool downloadFirmware(
          !(response.content_length > 0 && sdSize != static_cast<size_t>(response.content_length));
     if (!ok) {
         SD.remove(filePath);
-        launcherUiError(launcherUiIsCancelled() ? "Download cancelled" : "Download failed");
+        launcherUiError(launcherUiIsCancelled() ? "Download cancelled." : "Download failed.",
+                        launcherUiIsCancelled() ? "Cancelled" : "Error");
         return false;
     }
 
+    launcherUiStep("Verifying SD file...", 100, "");
     saveDownloadedFirmware(folder, fid, version);
-    launcherUiFinish(true, "Downloaded to SD", filePath.c_str());
+    s_lastDownloadedPath = filePath;
+    String detail = launcherFormatDownloadSavedDetail(filePath, sdSize);
+    launcherUiFinishWithPrimaryAction(
+        true, "Saved to SD", detail.c_str(), "Install Now", installLastDownloadedSdCb, "Done"
+    );
     return true;
 }
 

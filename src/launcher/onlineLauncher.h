@@ -31,6 +31,8 @@ String launcherSanitizeFilename(String input);
 bool launcherParseContentRangeTotal(const char *contentRange, size_t &total);
 String launcherBuildSourceUrl(const String &fid, const String &sourceUrl, bool useProxy);
 uint32_t launcherFirstDataPartitionOffsetFromTable(const uint8_t *table, size_t len);
+String launcherFormatAppInstalledDetail(const String &appName);
+String launcherFormatDownloadSavedDetail(const String &filePath, size_t fileSizeBytes);
 
 // Wi-Fi helpers wired to pixel-cyd's wifi_mgr.
 bool launcherIsWifiConnected();
