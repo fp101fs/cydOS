@@ -2,10 +2,13 @@
 #include "../config/hw_config.h"
 #include "../theme/m3_theme.h"
 #include "../components/m3_widgets.h"
+#include "../components/m3_modal.h"
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <sd_diskio.h>
+#include <ff.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -199,24 +202,124 @@ static void fileClickCb(lv_event_t* e) {
     m3ShowToast(fname, 1200);
 }
 
+// ============================================================================
+// Micro SD Card FAT32 Format (Triple-Confirm via m3_modal)
+// ============================================================================
+
+static bool formatSdCardFat32(int* outErrCode) {
+    if (outErrCode) *outErrCode = 0;
+
+    SPIClass sdSpi(VSPI);
+    sdSpi.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+
+    uint8_t pdrv = sdcard_init(PIN_SD_CS, &sdSpi, FILES_SD_SPI_FREQ_HZ);
+    if (pdrv == 0xFF) {
+        if (outErrCode) *outErrCode = -1;
+        return false;
+    }
+
+    char drv[4] = { (char)('0' + pdrv), ':', '\0', '\0' };
+    constexpr size_t WORK_LEN = 4096;
+    uint8_t* work = (uint8_t*)malloc(WORK_LEN);
+    if (!work) {
+        sdcard_uninit(pdrv);
+        if (outErrCode) *outErrCode = -2;
+        return false;
+    }
+
+    // Format to FAT32 (or FAT16 on tiny cards) — best universal format for ESP32/CYD/PC
+    FRESULT res = f_mkfs(drv, FM_FAT | FM_FAT32, 0, work, WORK_LEN);
+    free(work);
+    sdcard_uninit(pdrv);
+
+    if (outErrCode) *outErrCode = (int)res;
+    return (res == FR_OK);
+}
+
+static void executeFormatSd() {
+    m3PulseFeedback();
+    m3ShowToast("Formatting SD (FAT32)...", 2000);
+    lv_timer_handler(); // Paint toast before blocking format
+
+    int err = 0;
+    bool ok = formatSdCardFat32(&err);
+    copyStr(s_sdPath, sizeof(s_sdPath), "/");
+    scanSdDirectory(s_sdPath);
+    renderFiles();
+
+    if (ok) {
+        m3ShowToast("SD formatted (FAT32)!", 1800);
+    } else {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "Format failed (err %d)", err);
+        m3ShowToast(msg, 2000);
+    }
+}
+
+static void showFormatConfirm3() {
+    static const M3ModalBtn btns[2] = {
+        { "Cancel",     0,        0,              nullptr,         true },
+        { "FORMAT NOW", 0x7F1D1D, M3Color::CORAL, executeFormatSd, true }
+    };
+    m3ModalShow("Final Confirm (3/3)",
+                "Last chance!\n\nTap FORMAT NOW to wipe and format Micro SD as FAT32.",
+                btns, 2, M3Color::CORAL);
+}
+
+static void showFormatConfirm2() {
+    static const M3ModalBtn btns[2] = {
+        { "Cancel",     0,        0,              nullptr,            true },
+        { "Yes, Erase", 0x5C2229, M3Color::CORAL, showFormatConfirm3, true }
+    };
+    m3ModalShow("Are You Sure? (2/3)",
+                "This permanently deletes every file and folder on the SD card.\n\nThis cannot be undone.",
+                btns, 2, M3Color::CORAL);
+}
+
+static void formatBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    static const M3ModalBtn btns[2] = {
+        { "Cancel",   0,        0,              nullptr,            true },
+        { "Continue", 0x3B1D22, M3Color::CORAL, showFormatConfirm2, true }
+    };
+    m3ModalShow("Format SD? (1/3)",
+                "Erase ALL data on the Micro SD card and format it as FAT32?",
+                btns, 2, M3Color::CORAL);
+}
+
 static void renderSdView() {
     char backLbl[48];
     if (strcmp(s_sdPath, "/") == 0) {
         if (s_sdMounted && s_sdSizeMb > 0) {
             if (s_sdSizeMb >= 1024) {
-                snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT "  SD (%.1f GB)", (float)s_sdSizeMb / 1024.0f);
+                snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT " SD %.1fGB", (float)s_sdSizeMb / 1024.0f);
             } else {
-                snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT "  SD (%lu MB)", (unsigned long)s_sdSizeMb);
+                snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT " SD %luMB", (unsigned long)s_sdSizeMb);
             }
         } else {
-            snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT "  Files");
+            snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT " Files");
         }
     } else {
-        snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT "  %s", s_sdPath);
+        snprintf(backLbl, sizeof(backLbl), LV_SYMBOL_LEFT " %s", s_sdPath);
     }
 
-    lv_obj_t* backChip = m3PillBtn(s_body, backLbl, m3SurfaceHighestHex(), M3Color::TERTIARY, LV_PCT(100), 30);
+    // Top bar: Back/Path pill + Format button
+    lv_obj_t* topRow = lv_obj_create(s_body);
+    lv_obj_set_size(topRow, LV_PCT(100), 30);
+    lv_obj_set_style_bg_opa(topRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(topRow, 0, 0);
+    lv_obj_set_style_pad_all(topRow, 0, 0);
+    lv_obj_set_flex_flow(topRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(topRow, 6, 0);
+    lv_obj_clear_flag(topRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* backChip = m3PillBtn(topRow, backLbl, m3SurfaceHighestHex(), M3Color::TERTIARY, 134, 30);
+    lv_obj_set_flex_grow(backChip, 1);
     lv_obj_add_event_cb(backChip, sdBackCb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* fmtBtn = m3PillBtn(topRow, LV_SYMBOL_TRASH " Format", 0x3B1D22, M3Color::CORAL, 78, 30);
+    lv_obj_add_event_cb(fmtBtn, formatBtnCb, LV_EVENT_CLICKED, nullptr);
 
     if (!s_sdMounted) {
         lv_obj_t* card = m3Card(s_body, LV_PCT(100), 86, 14);
