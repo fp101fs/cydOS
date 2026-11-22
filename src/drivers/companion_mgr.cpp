@@ -1150,11 +1150,17 @@ static void companionWorkerTask(void* param) {
 // Public API
 // ============================================================================
 
-void companionMgrInit() {
+static void ensureCompanionWorkerStarted() {
     if (!s_chatHist) {
         s_chatHist = (ChatHistorySlot*)calloc(COMPANION_MAX_MESSAGES, sizeof(ChatHistorySlot));
     }
+    if (!s_workerStarted) {
+        s_workerStarted = true;
+        xTaskCreatePinnedToCore(companionWorkerTask, "companion_ws", 4608, nullptr, 1, nullptr, 0);
+    }
+}
 
+void companionMgrInit() {
     Preferences prefs;
     if (prefs.begin(NVS_NS, true)) {
         String h = prefs.getString("host", "");
@@ -1172,12 +1178,10 @@ void companionMgrInit() {
         COMP_UNLOCK();
     }
 
-    // Restore persisted WhatsApp chats & conversation bubbles from NVS flash
-    loadChatsFromNvs();
-
-    if (!s_workerStarted) {
-        s_workerStarted = true;
-        xTaskCreatePinnedToCore(companionWorkerTask, "companion_ws", 4608, nullptr, 1, nullptr, 0);
+    // Only allocate chat history (~7 KB) & background WebSocket task (~9.2 KB) when configured.
+    if (s_host[0] != '\0') {
+        ensureCompanionWorkerStarted();
+        loadChatsFromNvs();
     }
 }
 
@@ -1221,6 +1225,9 @@ void companionSetConfig(const char* host, uint16_t port, const char* token) {
         prefs.end();
     }
 
+    if (s_host[0] != '\0') {
+        ensureCompanionWorkerStarted();
+    }
     s_forceReconnect = true;
 }
 
@@ -1251,8 +1258,10 @@ bool companionIsConfigured() {
 }
 
 void companionConnectNow() {
+    bool hasHost = false;
     COMP_LOCK();
     if (s_host[0]) {
+        hasHost = true;
         s_userWantedConn = true;
         if (s_connState == CompanionConnState::AUTH_FAILED) {
             s_connState = CompanionConnState::DISCONNECTED;
@@ -1260,6 +1269,10 @@ void companionConnectNow() {
         s_lastError[0] = '\0';
     }
     COMP_UNLOCK();
+    if (hasHost) ensureCompanionWorkerStarted();
+    if (s_host[0] != '\0') {
+        ensureCompanionWorkerStarted();
+    }
     s_forceReconnect = true;
 }
 

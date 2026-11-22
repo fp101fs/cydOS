@@ -40,7 +40,7 @@ static StatusTone s_statusTone = StatusTone::MUTED;
 static uint32_t s_activeGen = 0;
 static HttpReaderState s_renderedState = HttpReaderState::IDLE;
 static bool s_lastWifiConnected = false;
-static HttpReaderResult s_snap = {};
+static void fetchAndRenderResult();
 
 static uint32_t statusColorHex(StatusTone tone) {
     switch (tone) {
@@ -164,16 +164,22 @@ static void renderResult(const HttpReaderResult& res) {
     }
 }
 
+static void fetchAndRenderResult() {
+    HttpReaderResult* snap = (HttpReaderResult*)malloc(sizeof(HttpReaderResult));
+    if (!snap) return;
+    if (httpReaderGetResult(snap)) {
+        s_renderedState = snap->state;
+        renderResult(*snap);
+    }
+    free(snap);
+}
+
 static void startFetchUrl(const char* rawUrl) {
     if (!rawUrl || !rawUrl[0]) return;
     if (m3KeyboardIsOpen()) m3KeyboardHide();
 
     s_activeGen = httpReaderFetch(rawUrl);
-
-    if (httpReaderGetResult(&s_snap)) {
-        s_renderedState = s_snap.state;
-        renderResult(s_snap);
-    }
+    fetchAndRenderResult();
 }
 
 static void browserDeleteCb(lv_event_t* e) {
@@ -238,10 +244,7 @@ void tickAppBrowser() {
         HttpReaderState curState = httpReaderGetState();
         uint32_t curGen = httpReaderGetGen();
         if (curGen == s_activeGen && curState != s_renderedState) {
-            if (httpReaderGetResult(&s_snap)) {
-                s_renderedState = s_snap.state;
-                renderResult(s_snap);
-            }
+            fetchAndRenderResult();
         }
     } else if (s_lastWifiConnected != g_sys.wifiConnected) {
         s_lastWifiConnected = g_sys.wifiConnected;

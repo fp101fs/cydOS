@@ -149,10 +149,21 @@ bool executeRequest(
         if (code <= 0) {
             resp->status = 0;
             resp->transport_error = code;
-            launcherConsolePrintf("[HTTP] %s failed: err=%d (%s) freeHeap=%lu maxBlk=%lu\n",
-                                  currentUrl.c_str(), code, HTTPClient::errorToString(code).c_str(),
-                                  static_cast<unsigned long>(ESP.getFreeHeap()),
-                                  static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+            char tlsErr[48] = {0};
+            if (isHttpsUrl(currentUrl)) {
+                secureClient.lastError(tlsErr, sizeof(tlsErr));
+            }
+            unsigned long freeKb = ESP.getFreeHeap() / 1024UL;
+            unsigned long blkKb = ESP.getMaxAllocHeap() / 1024UL;
+            if (tlsErr[0]) {
+                snprintf(resp->error_detail, sizeof(resp->error_detail), "%s (heap %luK/%luK)",
+                         tlsErr, freeKb, blkKb);
+            } else {
+                snprintf(resp->error_detail, sizeof(resp->error_detail), "%s (heap %luK/%luK)",
+                         HTTPClient::errorToString(code).c_str(), freeKb, blkKb);
+            }
+            launcherConsolePrintf("[HTTP] %s failed: err=%d %s\n",
+                                  currentUrl.c_str(), code, resp->error_detail);
             http.end();
             return false;
         }

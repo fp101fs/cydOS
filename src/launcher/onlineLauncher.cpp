@@ -291,6 +291,8 @@ bool getInfo(
         String reason;
         if (resp.status >= 200 && resp.status < 600 && resp.status != 0) {
             reason = String("HTTP ") + resp.status;
+        } else if (resp.error_detail[0]) {
+            reason = String("Net ") + resp.transport_error + ": " + resp.error_detail;
         } else {
             reason = String("Network error ") + resp.transport_error;
         }

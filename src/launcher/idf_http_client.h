@@ -11,6 +11,7 @@ struct LauncherHttpResponse {
     int64_t content_length = -1;
     int transport_error = 0;
     char content_range[96] = {0};
+    char error_detail[64] = {0};
 };
 
 using LauncherHttpChunkCb = bool (*)(const uint8_t *data, size_t len, void *ctx);

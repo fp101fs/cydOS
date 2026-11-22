@@ -548,7 +548,13 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 #define READER_UNLOCK() do {} while (0)
 #endif
 
-static HttpReaderResult s_result = {};
+static HttpReaderResult* s_result = nullptr;
+static bool ensureHttpResult() {
+    if (!s_result) {
+        s_result = (HttpReaderResult*)calloc(1, sizeof(HttpReaderResult));
+    }
+    return s_result != nullptr;
+}
 static char s_pendingUrl[HTTP_URL_MAX_LEN] = "";
 static uint32_t s_pendingGen = 0;
 static bool s_hasPending = false;
@@ -758,8 +764,6 @@ static bool performSingleFetch(const char* initialUrl, uint32_t gen, HttpReaderR
 }
 
 static void runWorkerLoop() {
-    static HttpReaderResult workBuf;
-
     for (;;) {
         char urlToFetch[HTTP_URL_MAX_LEN];
         uint32_t gen = 0;
@@ -776,13 +780,25 @@ static void runWorkerLoop() {
         s_cancelRequested = false;
         READER_UNLOCK();
 
-        bool committed = performSingleFetch(urlToFetch, gen, &workBuf);
+        HttpReaderResult* workBuf = (HttpReaderResult*)calloc(1, sizeof(HttpReaderResult));
+        if (!workBuf) {
+            READER_LOCK();
+            if (s_result && !s_hasPending && gen == s_result->gen) {
+                s_result->state = HttpReaderState::ERROR;
+                copyStr(s_result->error, sizeof(s_result->error), "Low memory");
+            }
+            READER_UNLOCK();
+            continue;
+        }
+
+        bool committed = performSingleFetch(urlToFetch, gen, workBuf);
 
         READER_LOCK();
-        if (committed && !s_hasPending && gen == s_result.gen) {
-            memcpy(&s_result, &workBuf, sizeof(s_result));
+        if (s_result && committed && !s_hasPending && gen == s_result->gen) {
+            memcpy(s_result, workBuf, sizeof(*s_result));
         }
         READER_UNLOCK();
+        free(workBuf);
     }
 }
 
@@ -798,20 +814,22 @@ uint32_t httpReaderFetch(const char* rawUrl) {
     char normalized[HTTP_URL_MAX_LEN];
     bool valid = httpReaderNormalizeUrl(rawUrl, normalized, sizeof(normalized));
 
+    if (!ensureHttpResult()) return 0;
+
     READER_LOCK();
-    uint32_t gen = ++s_result.gen;
+    uint32_t gen = ++s_result->gen;
     if (!valid) {
         s_hasPending = false;
         s_cancelRequested = true;
-        s_result.state = HttpReaderState::ERROR;
-        s_result.httpCode = 0;
-        s_result.elapsedMs = 0;
-        s_result.rawBytes = 0;
-        s_result.truncated = false;
-        copyStr(s_result.url, sizeof(s_result.url), rawUrl ? rawUrl : "");
-        copyStr(s_result.title, sizeof(s_result.title), "Invalid URL");
-        s_result.body[0] = '\0';
-        copyStr(s_result.error, sizeof(s_result.error), "Enter a valid http:// or https:// URL");
+        s_result->state = HttpReaderState::ERROR;
+        s_result->httpCode = 0;
+        s_result->elapsedMs = 0;
+        s_result->rawBytes = 0;
+        s_result->truncated = false;
+        copyStr(s_result->url, sizeof(s_result->url), rawUrl ? rawUrl : "");
+        copyStr(s_result->title, sizeof(s_result->title), "Invalid URL");
+        s_result->body[0] = '\0';
+        copyStr(s_result->error, sizeof(s_result->error), "Enter a valid http:// or https:// URL");
         READER_UNLOCK();
         return gen;
     }
@@ -819,28 +837,28 @@ uint32_t httpReaderFetch(const char* rawUrl) {
     if (!g_sys.wifiConnected) {
         s_hasPending = false;
         s_cancelRequested = true;
-        s_result.state = HttpReaderState::ERROR;
-        s_result.httpCode = 0;
-        s_result.elapsedMs = 0;
-        s_result.rawBytes = 0;
-        s_result.truncated = false;
-        copyStr(s_result.url, sizeof(s_result.url), normalized);
-        httpReaderExtractHost(normalized, s_result.title, sizeof(s_result.title));
-        s_result.body[0] = '\0';
-        copyStr(s_result.error, sizeof(s_result.error), "Wi-Fi not connected");
+        s_result->state = HttpReaderState::ERROR;
+        s_result->httpCode = 0;
+        s_result->elapsedMs = 0;
+        s_result->rawBytes = 0;
+        s_result->truncated = false;
+        copyStr(s_result->url, sizeof(s_result->url), normalized);
+        httpReaderExtractHost(normalized, s_result->title, sizeof(s_result->title));
+        s_result->body[0] = '\0';
+        copyStr(s_result->error, sizeof(s_result->error), "Wi-Fi not connected");
         READER_UNLOCK();
         return gen;
     }
 
-    s_result.state = HttpReaderState::LOADING;
-    s_result.httpCode = 0;
-    s_result.elapsedMs = 0;
-    s_result.rawBytes = 0;
-    s_result.truncated = false;
-    copyStr(s_result.url, sizeof(s_result.url), normalized);
-    httpReaderExtractHost(normalized, s_result.title, sizeof(s_result.title));
-    s_result.body[0] = '\0';
-    s_result.error[0] = '\0';
+    s_result->state = HttpReaderState::LOADING;
+    s_result->httpCode = 0;
+    s_result->elapsedMs = 0;
+    s_result->rawBytes = 0;
+    s_result->truncated = false;
+    copyStr(s_result->url, sizeof(s_result->url), normalized);
+    httpReaderExtractHost(normalized, s_result->title, sizeof(s_result->title));
+    s_result->body[0] = '\0';
+    s_result->error[0] = '\0';
 
     copyStr(s_pendingUrl, sizeof(s_pendingUrl), normalized);
     s_pendingGen = gen;
@@ -861,8 +879,10 @@ uint32_t httpReaderFetch(const char* rawUrl) {
             READER_LOCK();
             s_workerRunning = false;
             s_hasPending = false;
-            s_result.state = HttpReaderState::ERROR;
-            copyStr(s_result.error, sizeof(s_result.error), "Failed to start HTTP task");
+            if (s_result) {
+                s_result->state = HttpReaderState::ERROR;
+                copyStr(s_result->error, sizeof(s_result->error), "Failed to start HTTP task");
+            }
             READER_UNLOCK();
         }
 #else
@@ -876,30 +896,30 @@ void httpReaderCancel() {
     READER_LOCK();
     s_hasPending = false;
     s_cancelRequested = true;
-    if (s_result.state == HttpReaderState::LOADING) {
-        s_result.gen++;
-        s_result.state = HttpReaderState::IDLE;
+    if (s_result && s_result->state == HttpReaderState::LOADING) {
+        s_result->gen++;
+        s_result->state = HttpReaderState::IDLE;
     }
     READER_UNLOCK();
 }
 
 bool httpReaderIsLoading() {
     READER_LOCK();
-    bool loading = (s_result.state == HttpReaderState::LOADING);
+    bool loading = s_result && (s_result->state == HttpReaderState::LOADING);
     READER_UNLOCK();
     return loading;
 }
 
 uint32_t httpReaderGetGen() {
     READER_LOCK();
-    uint32_t gen = s_result.gen;
+    uint32_t gen = s_result ? s_result->gen : 0;
     READER_UNLOCK();
     return gen;
 }
 
 HttpReaderState httpReaderGetState() {
     READER_LOCK();
-    HttpReaderState st = s_result.state;
+    HttpReaderState st = s_result ? s_result->state : HttpReaderState::IDLE;
     READER_UNLOCK();
     return st;
 }
@@ -907,7 +927,12 @@ HttpReaderState httpReaderGetState() {
 bool httpReaderGetResult(HttpReaderResult* out) {
     if (!out) return false;
     READER_LOCK();
-    memcpy(out, &s_result, sizeof(*out));
+    if (!s_result) {
+        memset(out, 0, sizeof(*out));
+        out->state = HttpReaderState::IDLE;
+    } else {
+        memcpy(out, s_result, sizeof(*out));
+    }
     READER_UNLOCK();
     return true;
 }
