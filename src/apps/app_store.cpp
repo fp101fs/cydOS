@@ -123,6 +123,76 @@ bool appStoreIsValidInstallUrl(const char* url) {
     return hasDotOrColon;
 }
 
+bool appStoreIsBinFile(const char* name) {
+    if (!name) return false;
+    size_t len = strlen(name);
+    if (len <= 4) return false;
+    const char* ext = name + (len - 4);
+    if (ext[0] != '.') return false;
+    auto eq = [](char a, char b) {
+        if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+        return a == b;
+    };
+    return eq(ext[1], 'b') && eq(ext[2], 'i') && eq(ext[3], 'n');
+}
+
+std::string appStoreNormalizeSdPath(const char* path) {
+    if (!path || !path[0]) return "/";
+    std::string s(path);
+    // Ensure leading slash
+    if (s[0] != '/') s.insert(s.begin(), '/');
+    // Collapse trailing slashes (except root "/")
+    while (s.size() > 1 && s.back() == '/') {
+        s.pop_back();
+    }
+    return s;
+}
+
+std::string appStoreParentPath(const char* path) {
+    std::string norm = appStoreNormalizeSdPath(path);
+    if (norm == "/") return "/";
+    size_t slash = norm.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) return "/";
+    return norm.substr(0, slash);
+}
+
+void appStoreFormatSdPathDisplay(const char* path, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    std::string norm = appStoreNormalizeSdPath(path);
+    if (norm == "/") {
+        snprintf(out, outSize, "/ (Root)");
+        return;
+    }
+    constexpr size_t kMaxChars = 22;
+    if (norm.size() <= kMaxChars) {
+        snprintf(out, outSize, "%s", norm.c_str());
+    } else {
+        // Keep trailing path characters with leading "..."
+        const char* tail = norm.c_str() + (norm.size() - (kMaxChars - 3));
+        snprintf(out, outSize, "...%s", tail);
+    }
+}
+
+bool appStoreIsValidSdName(const char* name) {
+    if (!name) return false;
+    while (*name == ' ' || *name == '\t' || *name == '\r' || *name == '\n') ++name;
+    size_t len = strlen(name);
+    while (len > 0 && (name[len - 1] == ' ' || name[len - 1] == '\t' ||
+                       name[len - 1] == '\r' || name[len - 1] == '\n')) {
+        --len;
+    }
+    if (len == 0 || len > 64) return false;
+    if ((len == 1 && name[0] == '.') || (len == 2 && name[0] == '.' && name[1] == '.')) return false;
+    for (size_t i = 0; i < len; ++i) {
+        char c = name[i];
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+            c == '"' || c == '<' || c == '>' || c == '|') {
+            return false;
+        }
+    }
+    return true;
+}
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount) {
@@ -295,14 +365,34 @@ PendingExploreAction s_pendingExploreAction = PendingExploreAction::None;
 size_t s_pendingExploreItemIdx = 0;
 String s_pendingExploreUrl;
 
-// Reusable m3_keyboard text prompt modal (Search Apps / Install from URL)
+// Reusable m3_keyboard text prompt modal (Search Apps / Install from URL / SD Rename & New Folder)
 lv_obj_t* s_promptBackdrop = nullptr;
 lv_obj_t* s_promptTa = nullptr;
 std::function<void(const char*)> s_promptOnSubmit;
 
+// --- SD Card Tab State ---
+enum class PendingSdAction : uint8_t {
+    None = 0,
+    InstallBin,
+    EntryMenu,
+    DeleteEntry,
+    RenameEntry,
+    NewFolder,
+    CopyEntry,
+    PasteHere
+};
+
+String s_sdCurrentPath;
+bool s_sdPathInitialized = false;
+bool s_sdOnlyBins = false;
+std::vector<LauncherSdEntry> s_sdEntries;
+PendingSdAction s_pendingSdAction = PendingSdAction::None;
+size_t s_pendingSdIdx = 0;
+
 void renderActiveTab();
 void updateTabBarStyle();
 void queueExploreAction(PendingExploreAction action, size_t itemIdx = 0, const char* url = nullptr);
+void queueSdAction(PendingSdAction action, size_t entryIdx = 0);
 
 AppStoreStorageSummary computeLiveStorageSummary(const LauncherPartitionTable* tableOpt, uint8_t installedCount) {
     LauncherPartitionTable localTable;
@@ -587,6 +677,12 @@ void switchTabBtnCb(lv_event_t* e) {
         if (next == AppStoreTab::Explore && s_exploreDetail.active) {
             s_exploreDetail.active = false;
             renderActiveTab();
+        } else if (next == AppStoreTab::SdCard && isSdCardMounted()) {
+            String homePath = SD.exists("/downloads") ? String("/downloads") : String("/");
+            if (s_sdCurrentPath != homePath) {
+                s_sdCurrentPath = homePath;
+                renderActiveTab();
+            }
         }
         return;
     }
@@ -1683,28 +1779,542 @@ void buildExploreTab(lv_obj_t* container) {
     }
 }
 
-void buildSdCardPlaceholderTab(lv_obj_t* container) {
-    lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 6, 0);
+// --- SD Card Tab Logic (/downloads/ & SD Browser, Narrated Install, File Ops) ---
 
-    lv_obj_t* title = lv_label_create(card);
-    lv_label_set_text(title, LV_SYMBOL_SD_CARD "  SD Card Installer");
-    lv_obj_set_style_text_color(title, lv_color_hex(m3PrimaryHex()), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+void resolveDefaultSdPath() {
+    if (!s_sdPathInitialized || s_sdCurrentPath.isEmpty()) {
+        s_sdCurrentPath = SD.exists("/downloads") ? String("/downloads") : String("/");
+        s_sdPathInitialized = true;
+    } else if (s_sdCurrentPath != "/" && !SD.exists(s_sdCurrentPath)) {
+        s_sdCurrentPath = SD.exists("/downloads") ? String("/downloads") : String("/");
+    }
+}
 
-    lv_obj_t* sub = lv_label_create(card);
-    lv_label_set_text(sub, isSdCardMounted()
-                               ? "SD card mounted. Ready for /downloads/ browser and .bin flashing."
-                               : "SD card not mounted. Insert a FAT32 SD card with .bin Apps.");
-    lv_obj_set_width(sub, LV_PCT(100));
-    lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(sub, lv_color_hex(m3TextSecondaryHex()), 0);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+void promptSdNewFolder() {
+    openTextPromptModal("New Folder", "Folder name", "", 48, "Create",
+                        [](const char* text) {
+                            String name(text ? text : "");
+                            name.trim();
+                            if (!appStoreIsValidSdName(name.c_str())) {
+                                launcherUiError("Enter a valid folder name (no / \\ : * ? \" < > |).", "Invalid Name");
+                                return;
+                            }
+                            if (createFolderOnSd(s_sdCurrentPath, name)) {
+                                m3ShowToast("Folder created", 1200);
+                            } else {
+                                launcherUiError("Could not create folder on SD card.", "New Folder");
+                            }
+                            if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+                        });
+}
 
-    lv_obj_t* checkBtn = m3PillBtn(card, LV_SYMBOL_REFRESH "  Check SD Card",
-                                   M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 32);
-    lv_obj_add_event_cb(checkBtn, checkSdBtnCb, LV_EVENT_CLICKED, nullptr);
+void promptSdRenameEntry(const LauncherSdEntry& entry) {
+    String fullPath = entry.fullPath;
+    openTextPromptModal("Rename Item", "New name", entry.name.c_str(), 48, "Rename",
+                        [fullPath](const char* text) {
+                            String name(text ? text : "");
+                            name.trim();
+                            if (!appStoreIsValidSdName(name.c_str())) {
+                                launcherUiError("Enter a valid file or folder name.", "Invalid Name");
+                                return;
+                            }
+                            if (renameOnSd(fullPath, name)) {
+                                m3ShowToast("Renamed", 1200);
+                            } else {
+                                launcherUiError("Could not rename item on SD card.", "Rename");
+                            }
+                            if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+                        });
+}
+
+void runSdDeleteEntry(const LauncherSdEntry& entry) {
+    String msg = String("Permanently delete \"") + entry.name + "\"";
+    if (entry.isDir) msg += " and all files inside it";
+    msg += " from SD card?";
+    if (!launcherUiConfirm("Delete Item", msg.c_str(), "Delete", M3Color::CORAL)) {
+        return;
+    }
+    if (deleteFromSd(entry.fullPath)) {
+        if (hasFileToCopy() && getFileToCopy() == entry.fullPath) {
+            clearFileToCopy();
+        }
+        m3ShowToast("Deleted", 1200);
+    } else {
+        launcherUiError("Could not delete item from SD card.", "Delete Failed");
+    }
+    if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+}
+
+void runSdEntryMenu(const LauncherSdEntry& entry) {
+    bool isBin = !entry.isDir && appStoreIsBinFile(entry.name.c_str());
+    std::vector<LauncherUiOption> opts;
+
+    if (isBin) {
+        opts.push_back({String(LV_SYMBOL_DOWNLOAD "  Install App"), [entry]() {
+            updateFromSD(entry.fullPath, true, false);
+        }});
+    }
+    if (!entry.isDir) {
+        opts.push_back({String(LV_SYMBOL_COPY "  Copy File"), [entry]() {
+            if (copyFile(entry.fullPath)) {
+                m3ShowToast("Copied to clipboard", 1200);
+                if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+            }
+        }});
+    }
+    opts.push_back({String(LV_SYMBOL_EDIT "  Rename"), [entry]() {
+        promptSdRenameEntry(entry);
+    }});
+    opts.push_back({String(LV_SYMBOL_TRASH "  Delete"), [entry]() {
+        runSdDeleteEntry(entry);
+    }});
+
+    String subtitle = entry.isDir ? String("Folder") : entry.fullPath;
+    launcherUiSelectOption(entry.name.c_str(), opts, subtitle.c_str());
+}
+
+void asyncDispatchSdAction(void* arg) {
+    (void)arg;
+    PendingSdAction action = s_pendingSdAction;
+    size_t idx = s_pendingSdIdx;
+    s_pendingSdAction = PendingSdAction::None;
+    s_pendingSdIdx = 0;
+
+    switch (action) {
+        case PendingSdAction::InstallBin:
+            if (idx < s_sdEntries.size()) {
+                LauncherSdEntry entry = s_sdEntries[idx];
+                updateFromSD(entry.fullPath, true, false);
+            }
+            break;
+        case PendingSdAction::EntryMenu:
+            if (idx < s_sdEntries.size()) {
+                LauncherSdEntry entry = s_sdEntries[idx];
+                runSdEntryMenu(entry);
+            }
+            break;
+        case PendingSdAction::DeleteEntry:
+            if (idx < s_sdEntries.size()) {
+                LauncherSdEntry entry = s_sdEntries[idx];
+                runSdDeleteEntry(entry);
+            }
+            break;
+        case PendingSdAction::RenameEntry:
+            if (idx < s_sdEntries.size()) {
+                LauncherSdEntry entry = s_sdEntries[idx];
+                promptSdRenameEntry(entry);
+            }
+            break;
+        case PendingSdAction::NewFolder:
+            promptSdNewFolder();
+            break;
+        case PendingSdAction::CopyEntry:
+            if (idx < s_sdEntries.size()) {
+                if (copyFile(s_sdEntries[idx].fullPath)) {
+                    m3ShowToast("Copied to clipboard", 1200);
+                    if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+                }
+            }
+            break;
+        case PendingSdAction::PasteHere:
+            if (hasFileToCopy()) {
+                pasteFile(s_sdCurrentPath);
+                if (s_storeBody && s_activeTab == AppStoreTab::SdCard) renderActiveTab();
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void queueSdAction(PendingSdAction action, size_t entryIdx) {
+    s_pendingSdAction = action;
+    s_pendingSdIdx = entryIdx;
+    lv_async_call(asyncDispatchSdAction, nullptr);
+}
+
+void sdUpBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    std::string parent = appStoreParentPath(s_sdCurrentPath.c_str());
+    if (s_sdCurrentPath != parent.c_str()) {
+        s_sdCurrentPath = String(parent.c_str());
+        renderActiveTab();
+    }
+}
+
+void sdQuickJumpBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    if (s_sdCurrentPath == "/downloads") {
+        s_sdCurrentPath = "/";
+    } else {
+        if (!SD.exists("/downloads")) {
+            SD.mkdir("/downloads");
+        }
+        s_sdCurrentPath = "/downloads";
+    }
+    renderActiveTab();
+}
+
+void sdRefreshBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    setupSdCard();
+    renderActiveTab();
+}
+
+void sdToggleFilterCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    s_sdOnlyBins = !s_sdOnlyBins;
+    renderActiveTab();
+}
+
+void sdNewFolderBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueSdAction(PendingSdAction::NewFolder);
+}
+
+void sdPasteBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueSdAction(PendingSdAction::PasteHere);
+}
+
+void sdClearCopyBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    clearFileToCopy();
+    renderActiveTab();
+}
+
+void sdOpenFolderCb(lv_event_t* e) {
+    m3PulseFeedback();
+    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (idx >= s_sdEntries.size() || !s_sdEntries[idx].isDir) return;
+    s_sdCurrentPath = String(appStoreNormalizeSdPath(s_sdEntries[idx].fullPath.c_str()).c_str());
+    renderActiveTab();
+}
+
+void sdInstallBinBtnCb(lv_event_t* e) {
+    m3PulseFeedback();
+    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (idx >= s_sdEntries.size()) return;
+    queueSdAction(PendingSdAction::InstallBin, idx);
+}
+
+void sdEntryMenuBtnCb(lv_event_t* e) {
+    m3PulseFeedback();
+    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (idx >= s_sdEntries.size()) return;
+    queueSdAction(PendingSdAction::EntryMenu, idx);
+}
+
+void buildSdCardTab(lv_obj_t* container) {
+    // Attempt mount automatically if not currently mounted
+    if (!isSdCardMounted()) {
+        setupSdCard();
+    }
+
+    // 1. Unmounted state
+    if (!isSdCardMounted()) {
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(card, 12, 0);
+        lv_obj_set_style_pad_row(card, 6, 0);
+
+        lv_obj_t* ico = lv_label_create(card);
+        lv_label_set_text(ico, LV_SYMBOL_SD_CARD);
+        lv_obj_set_style_text_color(ico, lv_color_hex(m3PrimaryHex()), 0);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_28, 0);
+
+        lv_obj_t* title = lv_label_create(card);
+        lv_label_set_text(title, "No SD Card Detected");
+        lv_obj_set_style_text_color(title, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+
+        lv_obj_t* sub = lv_label_create(card);
+        lv_label_set_text(sub, "Insert a FAT32 microSD card with .bin Apps or backups, then tap Mount.");
+        lv_obj_set_width(sub, LV_PCT(100));
+        lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(sub, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* mountBtn = m3PillBtn(card, LV_SYMBOL_REFRESH "  Mount SD Card",
+                                       M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 32);
+        lv_obj_add_event_cb(mountBtn, checkSdBtnCb, LV_EVENT_CLICKED, nullptr);
+
+        lv_obj_t* exploreBtn = m3PillBtn(card, LV_SYMBOL_WIFI "  Browse Explore Instead",
+                                         m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 28);
+        lv_obj_add_event_cb(exploreBtn, switchTabBtnCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(static_cast<intptr_t>(AppStoreTab::Explore)));
+        return;
+    }
+
+    resolveDefaultSdPath();
+    bool listed = listSdDirectory(s_sdCurrentPath, s_sdEntries, s_sdOnlyBins, true);
+    if (!listed && s_sdCurrentPath != "/") {
+        s_sdCurrentPath = "/";
+        listed = listSdDirectory(s_sdCurrentPath, s_sdEntries, s_sdOnlyBins, true);
+    }
+    if (!listed) {
+        // Card was removed mid-session; re-render unmounted state
+        unmountSdCard();
+        lv_obj_t* errCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_flex_flow(errCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(errCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(errCard, 10, 0);
+        lv_obj_set_style_pad_row(errCard, 6, 0);
+
+        lv_obj_t* lbl = lv_label_create(errCard);
+        lv_label_set_text(lbl, "SD card could not be read.");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(M3Color::CORAL), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* retryBtn = m3PillBtn(errCard, LV_SYMBOL_REFRESH "  Retry",
+                                       M3Color::PRIMARY_CONT, M3Color::PRIMARY, 110, 28);
+        lv_obj_add_event_cb(retryBtn, checkSdBtnCb, LV_EVENT_CLICKED, nullptr);
+        return;
+    }
+
+    // 2. Path navigation bar (Up | Path | Quick-jump | Refresh)
+    lv_obj_t* pathRow = lv_obj_create(container);
+    lv_obj_set_size(pathRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(pathRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pathRow, 0, 0);
+    lv_obj_set_style_pad_all(pathRow, 0, 0);
+    lv_obj_set_style_pad_column(pathRow, 4, 0);
+    lv_obj_set_flex_flow(pathRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(pathRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(pathRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    bool atRoot = (s_sdCurrentPath == "/");
+    lv_obj_t* upBtn = m3PillBtn(pathRow, LV_SYMBOL_UP,
+                                atRoot ? m3SurfaceHighestHex() : M3Color::PRIMARY_CONT,
+                                atRoot ? m3TextSecondaryHex() : M3Color::PRIMARY, 28, 26);
+    if (!atRoot) {
+        lv_obj_add_event_cb(upBtn, sdUpBtnCb, LV_EVENT_CLICKED, nullptr);
+    } else {
+        lv_obj_set_style_opa(upBtn, LV_OPA_50, 0);
+    }
+
+    lv_obj_t* pathPill = lv_obj_create(pathRow);
+    lv_obj_set_height(pathPill, 26);
+    lv_obj_set_flex_grow(pathPill, 1);
+    lv_obj_set_style_bg_color(pathPill, lv_color_hex(m3SurfaceHighHex()), 0);
+    lv_obj_set_style_bg_opa(pathPill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(pathPill, 1, 0);
+    lv_obj_set_style_border_color(pathPill, lv_color_hex(m3OutlineHex()), 0);
+    lv_obj_set_style_border_opa(pathPill, LV_OPA_50, 0);
+    lv_obj_set_style_radius(pathPill, M3Dim::RADIUS_PILL, 0);
+    lv_obj_set_style_pad_hor(pathPill, 8, 0);
+    lv_obj_set_style_pad_ver(pathPill, 0, 0);
+    lv_obj_clear_flag(pathPill, LV_OBJ_FLAG_SCROLLABLE);
+
+    char pathDisp[32];
+    appStoreFormatSdPathDisplay(s_sdCurrentPath.c_str(), pathDisp, sizeof(pathDisp));
+    lv_obj_t* pathLbl = lv_label_create(pathPill);
+    lv_label_set_text(pathLbl, pathDisp);
+    lv_obj_set_width(pathLbl, LV_PCT(100));
+    lv_label_set_long_mode(pathLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(pathLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(pathLbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(pathLbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t* refBtn = m3PillBtn(pathRow, LV_SYMBOL_REFRESH,
+                                 m3SurfaceHighestHex(), m3TextPrimaryHex(), 28, 26);
+    lv_obj_add_event_cb(refBtn, sdRefreshBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    // 3. Action chips row (+ Folder | /downloads or Root | .bin Filter)
+    lv_obj_t* toolRow = lv_obj_create(container);
+    lv_obj_set_size(toolRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(toolRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(toolRow, 0, 0);
+    lv_obj_set_style_pad_all(toolRow, 0, 0);
+    lv_obj_set_style_pad_column(toolRow, 4, 0);
+    lv_obj_set_flex_flow(toolRow, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(toolRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    createCompactChip(toolRow, LV_SYMBOL_PLUS " Folder",
+                      m3SurfaceHighestHex(), m3TextPrimaryHex(),
+                      sdNewFolderBtnCb, nullptr);
+
+    bool inDownloads = (s_sdCurrentPath == "/downloads");
+    createCompactChip(toolRow, inDownloads ? LV_SYMBOL_SD_CARD " Root" : LV_SYMBOL_DOWNLOAD " Downloads",
+                      M3Color::PRIMARY_CONT, M3Color::PRIMARY,
+                      sdQuickJumpBtnCb, nullptr);
+
+    createCompactChip(toolRow, s_sdOnlyBins ? LV_SYMBOL_OK " .bin" : "All Files",
+                      s_sdOnlyBins ? M3Color::PRIMARY_CONT : m3SurfaceHighestHex(),
+                      s_sdOnlyBins ? M3Color::PRIMARY : m3TextSecondaryHex(),
+                      sdToggleFilterCb, nullptr);
+
+    // 4. Active clipboard banner (when a file is staged for Copy/Paste)
+    if (hasFileToCopy()) {
+        String clipPath = getFileToCopy();
+        String clipName = clipPath.substring(clipPath.lastIndexOf('/') + 1);
+
+        lv_obj_t* clipCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 12);
+        lv_obj_set_style_pad_all(clipCard, 6, 0);
+        lv_obj_set_style_pad_column(clipCard, 5, 0);
+        lv_obj_set_flex_flow(clipCard, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(clipCard, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* clipLbl = lv_label_create(clipCard);
+        lv_label_set_text(clipLbl, (String(LV_SYMBOL_COPY " ") + clipName).c_str());
+        lv_obj_set_flex_grow(clipLbl, 1);
+        lv_label_set_long_mode(clipLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(clipLbl, lv_color_hex(m3PrimaryHex()), 0);
+        lv_obj_set_style_text_font(clipLbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* pasteBtn = m3PillBtn(clipCard, "Paste", M3Color::PRIMARY, M3Color::ON_PRIMARY, 48, 24);
+        lv_obj_add_event_cb(pasteBtn, sdPasteBtnCb, LV_EVENT_CLICKED, nullptr);
+
+        lv_obj_t* clrBtn = m3PillBtn(clipCard, LV_SYMBOL_CLOSE, m3SurfaceHighestHex(), m3TextSecondaryHex(), 24, 24);
+        lv_obj_add_event_cb(clrBtn, sdClearCopyBtnCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // 5. Empty folder state
+    if (s_sdEntries.empty()) {
+        lv_obj_t* emptyCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_flex_flow(emptyCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(emptyCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(emptyCard, 12, 0);
+        lv_obj_set_style_pad_row(emptyCard, 6, 0);
+
+        lv_obj_t* ico = lv_label_create(emptyCard);
+        lv_label_set_text(ico, LV_SYMBOL_DIRECTORY);
+        lv_obj_set_style_text_color(ico, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_28, 0);
+
+        lv_obj_t* eTitle = lv_label_create(emptyCard);
+        lv_label_set_text(eTitle, s_sdOnlyBins ? "No .bin Apps Here" : "Folder is Empty");
+        lv_obj_set_style_text_color(eTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(eTitle, &lv_font_montserrat_14, 0);
+
+        lv_obj_t* eDesc = lv_label_create(emptyCard);
+        lv_label_set_text(eDesc, s_sdOnlyBins
+                                     ? "Switch to All Files or download Apps from Explore to /downloads/."
+                                     : "Copy .bin Apps to your SD card or download them from Explore.");
+        lv_obj_set_width(eDesc, LV_PCT(100));
+        lv_label_set_long_mode(eDesc, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(eDesc, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(eDesc, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(eDesc, &lv_font_montserrat_10, 0);
+
+        if (s_sdOnlyBins) {
+            lv_obj_t* allBtn = m3PillBtn(emptyCard, "Show All Files",
+                                         M3Color::PRIMARY_CONT, M3Color::PRIMARY, 124, 28);
+            lv_obj_add_event_cb(allBtn, sdToggleFilterCb, LV_EVENT_CLICKED, nullptr);
+        } else {
+            lv_obj_t* expBtn = m3PillBtn(emptyCard, LV_SYMBOL_WIFI "  Go to Explore",
+                                         M3Color::PRIMARY_CONT, M3Color::PRIMARY, 132, 28);
+            lv_obj_add_event_cb(expBtn, switchTabBtnCb, LV_EVENT_CLICKED,
+                                reinterpret_cast<void*>(static_cast<intptr_t>(AppStoreTab::Explore)));
+        }
+        return;
+    }
+
+    // 6. Folder & File cards
+    for (size_t i = 0; i < s_sdEntries.size(); ++i) {
+        const LauncherSdEntry& entry = s_sdEntries[i];
+        bool isBin = !entry.isDir && appStoreIsBinFile(entry.name.c_str());
+
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 13);
+        lv_obj_set_style_pad_all(card, 7, 0);
+        lv_obj_set_style_pad_column(card, 7, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, entry.isDir ? sdOpenFolderCb : sdEntryMenuBtnCb,
+                            LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+
+        // Badge
+        uint32_t badgeBg = m3SurfaceHighestHex();
+        uint32_t badgeFg = m3TextSecondaryHex();
+        const char* badgeSym = LV_SYMBOL_FILE;
+        if (entry.isDir) {
+            badgeBg = 0x3D2E14;
+            badgeFg = M3Color::AMBER;
+            badgeSym = LV_SYMBOL_DIRECTORY;
+        } else if (isBin) {
+            uint32_t accentHex = M3Color::PRIMARY;
+            uint32_t containerHex = 0x2563EB;
+            launcherHomePickColors(entry.name.c_str(), &accentHex, &containerHex);
+            badgeBg = containerHex;
+            badgeFg = 0xFFFFFF;
+            badgeSym = LV_SYMBOL_DOWNLOAD;
+        }
+
+        lv_obj_t* badge = lv_obj_create(card);
+        lv_obj_set_size(badge, 26, 26);
+        lv_obj_set_style_radius(badge, 8, 0);
+        lv_obj_set_style_bg_color(badge, lv_color_hex(badgeBg), 0);
+        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(badge, 0, 0);
+        lv_obj_set_style_pad_all(badge, 0, 0);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* badgeIco = lv_label_create(badge);
+        lv_label_set_text(badgeIco, badgeSym);
+        lv_obj_set_style_text_color(badgeIco, lv_color_hex(badgeFg), 0);
+        lv_obj_set_style_text_font(badgeIco, &lv_font_montserrat_12, 0);
+        lv_obj_center(badgeIco);
+
+        // Name + subtitle
+        lv_obj_t* textCol = lv_obj_create(card);
+        lv_obj_set_height(textCol, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(textCol, 1);
+        lv_obj_set_style_bg_opa(textCol, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(textCol, 0, 0);
+        lv_obj_set_style_pad_all(textCol, 0, 0);
+        lv_obj_set_style_pad_row(textCol, 1, 0);
+        lv_obj_set_flex_flow(textCol, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(textCol, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(textCol, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* nameLbl = lv_label_create(textCol);
+        lv_label_set_text(nameLbl, entry.name.c_str());
+        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(nameLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
+
+        char subBuf[40];
+        if (entry.isDir) {
+            snprintf(subBuf, sizeof(subBuf), "Folder");
+        } else {
+            char szBuf[20];
+            appStoreFormatSizeCompact(static_cast<uint32_t>(entry.size), szBuf, sizeof(szBuf));
+            if (isBin) {
+                snprintf(subBuf, sizeof(subBuf), "%s • App Binary", szBuf);
+            } else {
+                snprintf(subBuf, sizeof(subBuf), "%s", szBuf);
+            }
+        }
+        lv_obj_t* subLbl = lv_label_create(textCol);
+        lv_label_set_text(subLbl, subBuf);
+        lv_obj_set_width(subLbl, LV_PCT(100));
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(subLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
+
+        // Quick action buttons
+        if (isBin) {
+            lv_obj_t* instBtn = m3PillBtn(card, "Install", M3Color::PRIMARY, M3Color::ON_PRIMARY, 48, 24);
+            lv_obj_add_event_cb(instBtn, sdInstallBinBtnCb, LV_EVENT_CLICKED,
+                                reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+        }
+
+        lv_obj_t* moreBtn = m3PillBtn(card, LV_SYMBOL_EDIT, m3SurfaceHighestHex(), m3TextSecondaryHex(), 24, 24);
+        lv_obj_add_event_cb(moreBtn, sdEntryMenuBtnCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+    }
 }
 
 void buildToolsPlaceholderTab(lv_obj_t* container) {
@@ -1778,7 +2388,7 @@ void renderActiveTab() {
             buildExploreTab(s_tabContent);
             break;
         case AppStoreTab::SdCard:
-            buildSdCardPlaceholderTab(s_tabContent);
+            buildSdCardTab(s_tabContent);
             break;
         case AppStoreTab::Installed:
             buildInstalledTab(s_tabContent);

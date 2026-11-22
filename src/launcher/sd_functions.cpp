@@ -1,6 +1,7 @@
 #include "sd_functions.h"
 #include "backup_manager.h"
 #include "install_shared.h"
+#include "launcher_app_registry.h"
 #include "launcher_platform.h"
 #include "launcher_ui_bridge.h"
 #include "littlefs_patch.h"
@@ -19,6 +20,21 @@ bool g_launcherSdMounted = false;
 
 namespace {
 String s_fileToCopy;
+String s_lastSdInstalledLabel;
+
+void launchLastSdInstalledAppCb() {
+    if (!s_lastSdInstalledLabel.isEmpty()) {
+        launcherBootAppByLabel(s_lastSdInstalledLabel.c_str());
+    }
+}
+
+void ensureSdProgressOpen(const char *stepText) {
+    if (!launcherUiIsProgressOpen()) {
+        launcherUiBeginProgress("Installing App", stepText, 0, true);
+    } else if (stepText) {
+        launcherUiStep(stepText, -1, "");
+    }
+}
 
 bool sortSdEntries(const LauncherSdEntry &a, const LauncherSdEntry &b) {
     if (a.isDir != b.isDir) return a.isDir > b.isDir;
@@ -152,6 +168,10 @@ bool flashRawFromSd(
 
     size_t written = 0;
     while (written < imageSize) {
+        if (launcherUiIsCancelled()) {
+            launcherRawUpdateEnd();
+            return false;
+        }
         size_t toRead = min(bufferSize, imageSize - written);
         int bytesRead = file.readBytes(reinterpret_cast<char *>(buf.get()), toRead);
         if (bytesRead <= 0) {
@@ -213,11 +233,16 @@ bool flashRawFromSd(
 
 bool installFromSdDynamic(
     File &file, const String &path, uint32_t appSize, uint32_t appOffset,
-    std::vector<LauncherInstallDataPartition> &dataPartitions, String &installedAppNameOut
+    std::vector<LauncherInstallDataPartition> &dataPartitions, String &installedAppNameOut,
+    String &installedAppLabelOut
 ) {
     String error;
     LauncherPartitionTable table;
-    launcherUiStep("Reading partition table...", -1);
+    ensureSdProgressOpen("Checking storage layout...");
+    if (launcherUiIsCancelled()) {
+        launcherUiError("App installation cancelled.", "Cancelled");
+        return false;
+    }
     if (!launcherPartitionReadCurrent(table, &error)) {
         launcherUiError(error.length() ? error : "Could not read partition table");
         return false;
@@ -233,7 +258,7 @@ bool installFromSdDynamic(
     String appLabel = launcherPartitionNextAppLabel(table, displayName);
     LauncherPartitionEntry appEntry;
 
-    launcherUiStep("Planning storage layout...", -1);
+    launcherUiStep("Planning flash partitions...", -1, displayName.c_str());
     if (!launcherSelectInstallLayout(table, appSize, appLabel, dataPartitions, appEntry, error)) {
         launcherConsolePrintf("SD install layout failed: %s\n", error.c_str());
         launcherUiError(error.length() ? error : "Not enough flash space");
@@ -268,14 +293,26 @@ bool installFromSdDynamic(
         }
     }
 
-    launcherUiBeginProgress("Installing App", "Flashing app firmware...");
-    if (!flashRawFromSd(file, appOffset, appSize, appEntry, true, "Flashing app firmware...")) {
-        launcherUiError(String("App flash failed: ") + launcherUpdateLastErrorName());
+    ensureSdProgressOpen("Flashing app from SD...");
+    if (launcherUiIsCancelled()) {
+        launcherUiError("App installation cancelled.", "Cancelled");
+        return false;
+    }
+    if (!flashRawFromSd(file, appOffset, appSize, appEntry, true, "Flashing app from SD...")) {
+        if (launcherUiIsCancelled()) {
+            launcherUiError("App installation cancelled.", "Cancelled");
+        } else {
+            launcherUiError(String("App flash failed: ") + launcherUpdateLastErrorName());
+        }
         return false;
     }
 
     for (const auto &dp : dataPartitions) {
         if (!dp.hasEntry || dp.copySize == 0) continue;
+        if (launcherUiIsCancelled()) {
+            launcherUiError("App installation cancelled.", "Cancelled");
+            return false;
+        }
         if (shouldRestore) {
             bool willRestore = false;
             for (const auto &bp : prevInstall.partitions) {
@@ -290,24 +327,31 @@ bool installFromSdDynamic(
         String stepText = String("Flashing ") + typeStr + " data...";
         const uint32_t copySize = dp.copySize > dp.entry.size ? dp.entry.size : dp.copySize;
         if (!flashRawFromSd(file, dp.sourceOffset, copySize, dp.entry, false, stepText.c_str())) {
-            launcherUiError(String(typeStr) + " flash failed: " + launcherUpdateLastErrorName());
+            if (launcherUiIsCancelled()) {
+                launcherUiError("App installation cancelled.", "Cancelled");
+            } else {
+                launcherUiError(String(typeStr) + " flash failed: " + launcherUpdateLastErrorName());
+            }
             return false;
         }
     }
 
-    launcherUiStep("Updating partition table...", -1);
+    // Lock modal before committing the partition table and boot slot.
+    launcherUiLockProgress();
+    launcherUiStep("Saving storage layout...", -1, "");
     if (!launcherPartitionWriteGeneratedTable(table, &error)) {
         launcherUiError(error.length() ? error : "Failed to write partition table");
         return false;
     }
 
-    launcherUiStep("Configuring boot slot...", -1);
+    launcherUiStep("Configuring boot slot...", -1, appEntry.label);
     if (!launcherPartitionSetOtaBoot(table, appEntry.subtype, &error)) {
         launcherUiError(error.length() ? error : "Failed to set boot slot");
         return false;
     }
 
     if (shouldRestore) {
+        launcherUiStep("Restoring app data backup...", -1, "");
         for (const auto &bp : prevInstall.partitions) {
             if (!bp.lastBackupPath.isEmpty() && SD.exists(bp.lastBackupPath)) {
                 bool restored = false;
@@ -329,7 +373,7 @@ bool installFromSdDynamic(
         }
     }
 
-    launcherUiStep("Adding app to Home Screen...", 100);
+    launcherUiStep("Adding icon to Home Screen...", 100, displayName.c_str());
     {
         std::vector<String> fatLabels;
         String registeredSpiffsLabel;
@@ -363,6 +407,7 @@ bool installFromSdDynamic(
         saveInstalledToConfig(bkInfo);
     }
 
+    installedAppLabelOut = String(appEntry.label);
     return true;
 }
 } // namespace
@@ -405,8 +450,10 @@ bool listSdDirectory(
     File root = SD.open(dirPath);
     if (!root || !root.isDirectory()) {
         if (root) root.close();
-        SD.end();
-        g_launcherSdMounted = false;
+        if (dirPath == "/" || SD.cardType() == CARD_NONE) {
+            SD.end();
+            g_launcherSdMounted = false;
+        }
         return false;
     }
 
@@ -528,6 +575,12 @@ bool pasteFile(const String &destFolder) {
     String filename = s_fileToCopy.substring(s_fileToCopy.lastIndexOf('/') + 1);
     String destPath = (base == "/" ? String("") : base) + "/" + filename;
 
+    if (destPath == s_fileToCopy) {
+        sourceFile.close();
+        launcherUiError("File is already in this folder.", "Copy File");
+        return false;
+    }
+
     File destFile = SD.open(destPath, FILE_WRITE, true);
     if (!destFile) {
         sourceFile.close();
@@ -546,11 +599,19 @@ bool pasteFile(const String &destFolder) {
 
     size_t total = sourceFile.size();
     size_t done = 0;
-    launcherUiBeginProgress("Copy File", ("Copying " + filename + "...").c_str());
+    launcherUiResetCancel();
+    launcherUiBeginProgress("Copy File", ("Copying " + filename + "...").c_str(), 0, true);
     launcherUiProgressBytes(0, total);
 
     size_t bytesRead = 0;
     while ((bytesRead = sourceFile.read(buffer.get(), bufferSize)) > 0) {
+        if (launcherUiIsCancelled()) {
+            sourceFile.close();
+            destFile.close();
+            SD.remove(destPath);
+            launcherUiError("File copy cancelled.", "Cancelled");
+            return false;
+        }
         if (destFile.write(buffer.get(), bytesRead) != bytesRead) {
             sourceFile.close();
             destFile.close();
@@ -585,7 +646,8 @@ bool updateFromSD(const String &path, bool askSpiffs, bool rebootAfter) {
         return false;
     }
 
-    launcherUiBeginProgress("Installing App", "Inspecting firmware binary...");
+    launcherUiResetCancel();
+    launcherUiBeginProgress("Installing App", "Inspecting firmware binary...", 0, true);
 
     bool isMerged = false;
     if (file.size() >= LAUNCHER_PARTITION_TABLE_OFFSET + 16 && file.seek(LAUNCHER_PARTITION_TABLE_OFFSET)) {
@@ -596,16 +658,22 @@ bool updateFromSD(const String &path, bool askSpiffs, bool rebootAfter) {
     }
 
     String installedName;
+    String installedLabel;
     if (!isMerged) {
         appSize = effectiveSdAppSize(file, 0, file.size());
-        bool ok = installFromSdDynamic(file, path, appSize, 0, dataPartitions, installedName);
+        bool ok = installFromSdDynamic(file, path, appSize, 0, dataPartitions, installedName, installedLabel);
         file.close();
         if (!ok) return false;
         if (rebootAfter) {
-            launcherUiStep("Restarting into app...", 100);
+            launcherUiStep("Starting app...", 100, installedName.c_str());
+            launcherDelayMs(400);
             launcherUiReboot();
         } else {
-            launcherUiFinish(true, "App Installed", (installedName + " added to Home Screen").c_str());
+            s_lastSdInstalledLabel = installedLabel;
+            String detail = installedName + " added to Home Screen.\nTap Launch Now to start it.";
+            launcherUiFinishWithPrimaryAction(
+                true, "App Installed", detail.c_str(), "Launch Now", launchLastSdInstalledAppCb, "Done"
+            );
         }
         return true;
     }
@@ -692,19 +760,24 @@ bool updateFromSD(const String &path, bool askSpiffs, bool rebootAfter) {
                 "Include"
             );
             if (!copySpiffs) spiffsIt->copySize = 0;
-            launcherUiBeginProgress("Installing App", "Preparing installation...");
+            launcherUiBeginProgress("Installing App", "Preparing installation...", 0, true);
         }
     }
 
-    bool ok = installFromSdDynamic(file, path, appSize, appOffset, dataPartitions, installedName);
+    bool ok = installFromSdDynamic(file, path, appSize, appOffset, dataPartitions, installedName, installedLabel);
     file.close();
     if (!ok) return false;
 
     if (rebootAfter) {
-        launcherUiStep("Restarting into app...", 100);
+        launcherUiStep("Starting app...", 100, installedName.c_str());
+        launcherDelayMs(400);
         launcherUiReboot();
     } else {
-        launcherUiFinish(true, "App Installed", (installedName + " added to Home Screen").c_str());
+        s_lastSdInstalledLabel = installedLabel;
+        String detail = installedName + " added to Home Screen.\nTap Launch Now to start it.";
+        launcherUiFinishWithPrimaryAction(
+            true, "App Installed", detail.c_str(), "Launch Now", launchLastSdInstalledAppCb, "Done"
+        );
     }
     return true;
 }

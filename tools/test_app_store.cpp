@@ -130,12 +130,64 @@ static void testExploreHelpers() {
     assert(!appStoreIsValidInstallUrl("https://nodot"));
 }
 
+static void testSdCardHelpers() {
+    // .bin detection (case-insensitive)
+    assert(appStoreIsBinFile("bruce.bin"));
+    assert(appStoreIsBinFile("MARAUDER.BIN"));
+    assert(appStoreIsBinFile("my_app_v1.2.BiN"));
+    assert(!appStoreIsBinFile(".bin"));
+    assert(!appStoreIsBinFile("bin"));
+    assert(!appStoreIsBinFile("readme.txt"));
+    assert(!appStoreIsBinFile("app.bin.bak"));
+    assert(!appStoreIsBinFile(""));
+    assert(!appStoreIsBinFile(nullptr));
+
+    // Path normalization
+    assert(appStoreNormalizeSdPath(nullptr) == "/");
+    assert(appStoreNormalizeSdPath("") == "/");
+    assert(appStoreNormalizeSdPath("/") == "/");
+    assert(appStoreNormalizeSdPath("/downloads/") == "/downloads");
+    assert(appStoreNormalizeSdPath("downloads/apps/") == "/downloads/apps");
+
+    // Parent path calculation
+    assert(appStoreParentPath("/") == "/");
+    assert(appStoreParentPath("/downloads") == "/");
+    assert(appStoreParentPath("/downloads/") == "/");
+    assert(appStoreParentPath("/downloads/games") == "/downloads");
+    assert(appStoreParentPath("/a/b/c/") == "/a/b");
+
+    // Path display formatting
+    char buf[40];
+    appStoreFormatSdPathDisplay("/", buf, sizeof(buf));
+    assert(strcmp(buf, "/ (Root)") == 0);
+    appStoreFormatSdPathDisplay("/downloads", buf, sizeof(buf));
+    assert(strcmp(buf, "/downloads") == 0);
+    appStoreFormatSdPathDisplay("/downloads/very_long_folder_name/sub", buf, sizeof(buf));
+    assert(strncmp(buf, "...", 3) == 0);
+    assert(strlen(buf) <= 22);
+
+    // SD file/folder name validation
+    assert(appStoreIsValidSdName("MyFolder"));
+    assert(appStoreIsValidSdName("  app_v2.bin  "));
+    assert(appStoreIsValidSdName("backup-2026"));
+    assert(!appStoreIsValidSdName(""));
+    assert(!appStoreIsValidSdName("   "));
+    assert(!appStoreIsValidSdName(nullptr));
+    assert(!appStoreIsValidSdName("."));
+    assert(!appStoreIsValidSdName(".."));
+    assert(!appStoreIsValidSdName("sub/dir"));
+    assert(!appStoreIsValidSdName("bad\\name"));
+    assert(!appStoreIsValidSdName("bad:name"));
+    assert(!appStoreIsValidSdName("bad*name"));
+}
+
 int main() {
     testTabs();
     testStorageSummary();
     testSizeFormatting();
     testInstalledMetaFormatting();
     testExploreHelpers();
+    testSdCardHelpers();
     printf("[OK] test_app_store: all assertions passed\n");
     return 0;
 }

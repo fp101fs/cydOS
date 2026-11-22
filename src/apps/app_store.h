@@ -46,6 +46,13 @@ void appStoreFormatVersionMeta(uint32_t appSizeBytes,
                                size_t outSize);
 bool appStoreIsValidInstallUrl(const char* url);
 
+// Pure SD Card browser helpers (host-testable)
+bool appStoreIsBinFile(const char* name);
+std::string appStoreNormalizeSdPath(const char* path);
+std::string appStoreParentPath(const char* path);
+void appStoreFormatSdPathDisplay(const char* path, char* out, size_t outSize);
+bool appStoreIsValidSdName(const char* name);
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount);
