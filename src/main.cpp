@@ -19,6 +19,9 @@
 #include "ui/nav_bar.h"
 #include "ui/quick_settings.h"
 #include "ui/app_manager.h"
+#include "launcher/launcher_ui_bridge.h"
+#include "launcher/backup_manager.h"
+#include "launcher/onlineLauncher.h"
 
 static bool s_bootWasDown = false;
 
@@ -44,6 +47,9 @@ void setup() {
     bleMgrInit();
     timeMgrInit();
     notesStoreInit();
+    launcherUiLoadState();
+    launcherBackupInit();
+    launcherOnlineInit();
     companionMgrInit();
     screenMirrorInit();
     homeScreenInit();

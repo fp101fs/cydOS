@@ -13,6 +13,9 @@ constexpr uint32_t LAUNCHER_APP_PARTITION_ALIGNMENT = 0x10000;
 constexpr size_t LAUNCHER_PARTITION_ENTRY_SIZE = 0x20;
 extern uint32_t LAUNCHER_DEFAULT_SPIFFS_SIZE;
 extern uint32_t LAUNCHER_DEFAULT_FAT_SIZE;
+#ifndef LAUNCHER_DEFAULT_SPIFFS_THRESHOLD
+#define LAUNCHER_DEFAULT_SPIFFS_THRESHOLD 0xC00000u // 12 MB (from bmorcelli/Launcher pre_compiler.h)
+#endif
 
 struct LauncherPartitionEntry {
     uint8_t type = 0xFF;
