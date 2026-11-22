@@ -1,0 +1,10 @@
+# Pixel CYD 4 MB Launcher-compatible partition table
+# Compatible with bmorcelli/Launcher dynamic partitioner (isFactoryOrTestApp + otadata).
+# Uses 'factory' subtype so stock Arduino ESP32 bootloader (espressif32 @ 6.10.0) boots it
+# directly when otadata is empty/erased; Launcher's partitioner protects both factory and test.
+# Leaves 0x1F0000 (2,031,616 bytes / ~1.94 MB) unallocated from 0x210000..0x400000 for
+# dynamically allocated OTA app slots and their SPIFFS/FAT/LittleFS data partitions.
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xE000,   0x2000,
+factory,  app,  factory, 0x10000,  0x200000,
