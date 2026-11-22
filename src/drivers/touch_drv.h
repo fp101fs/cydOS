@@ -11,6 +11,7 @@ struct TouchPoint {
 
 void touchInit();
 bool touchReadPoint(TouchPoint& out);
+bool touchReadLightPoint(TouchPoint& out); // Feather-light read (no 2-sample reject) for trackpad
 void touchCalibrateInteractive();
 bool touchIsCalibrated();
 

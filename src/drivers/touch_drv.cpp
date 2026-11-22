@@ -168,6 +168,30 @@ static bool xptSampleFiltered(uint16_t& rx, uint16_t& ry) {
     return true;
 }
 
+bool touchReadLightPoint(TouchPoint& out) {
+    out.pressed = false;
+    // Feather-light read: only requires hardware PENIRQ low (minimal finger pressure)
+    if (tPinIn(PIN_TOUCH_IRQ) != LOW) return false;
+    uint16_t rx = xptTransfer(0xD0);
+    uint16_t ry = xptTransfer(0x90);
+    if (rx == 0 || rx >= 4095 || ry == 0 || ry >= 4095) return false;
+
+    int16_t w = (int16_t)displayWidth();
+    int16_t h = (int16_t)displayHeight();
+    int16_t x = (int16_t)map((long)rx, s_calX0, s_calX1, 0, w - 1);
+    int16_t y = (int16_t)map((long)ry, s_calY0, s_calY1, 0, h - 1);
+    if (x < 0) x = 0;
+    if (x >= w) x = w - 1;
+    if (y < 0) y = 0;
+    if (y >= h) y = h - 1;
+    x = (w - 1) - x;
+
+    out.pressed = true;
+    out.x = x;
+    out.y = y;
+    return true;
+}
+
 bool touchReadPoint(TouchPoint& out) {
     out.pressed = false;
     uint16_t rx, ry;
