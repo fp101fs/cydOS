@@ -28,6 +28,10 @@
 
 static bool s_bootWasDown = false;
 
+// Increase Arduino loopTask stack from 8 KB to 14 KB so LVGL + mbedTLS HTTPS + ArduinoJson
+// in App Store Explore/OTA never overflow the stack.
+SET_LOOP_TASK_STACK_SIZE(14 * 1024);
+
 void setup() {
     // Release unused Classic Bluetooth DRAM (~36 KB) while keeping BLE (NimBLE) intact.
     esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);

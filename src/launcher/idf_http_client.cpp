@@ -41,15 +41,17 @@ bool streamBody(HTTPClient &http, int64_t contentLength, LauncherHttpChunkCb cb,
     WiFiClient *stream = http.getStreamPtr();
     if (!stream) return contentLength == 0;
 
-    uint8_t buf[kStreamChunkSize];
+    uint8_t *buf = static_cast<uint8_t *>(malloc(kStreamChunkSize));
+    if (!buf) return false;
     int64_t remaining = contentLength;
     uint32_t lastDataMs = millis();
+    bool ok = true;
 
     while (remaining != 0) {
         int avail = stream->available();
         if (avail > 0) {
             size_t toRead = static_cast<size_t>(avail);
-            if (toRead > sizeof(buf)) toRead = sizeof(buf);
+            if (toRead > kStreamChunkSize) toRead = kStreamChunkSize;
             if (remaining > 0 && static_cast<int64_t>(toRead) > remaining) {
                 toRead = static_cast<size_t>(remaining);
             }
@@ -57,7 +59,8 @@ bool streamBody(HTTPClient &http, int64_t contentLength, LauncherHttpChunkCb cb,
             if (n > 0) {
                 lastDataMs = millis();
                 if (cb && !cb(buf, static_cast<size_t>(n), ctx)) {
-                    return false;
+                    ok = false;
+                    break;
                 }
                 if (remaining > 0) remaining -= n;
                 continue;
@@ -72,12 +75,14 @@ bool streamBody(HTTPClient &http, int64_t contentLength, LauncherHttpChunkCb cb,
 
         if (static_cast<uint32_t>(millis() - lastDataMs) > kStreamIdleTimeoutMs) {
             launcherConsolePrintf("[HTTP] Stream idle timeout\n");
-            return false;
+            ok = false;
+            break;
         }
         delay(2);
     }
 
-    return (remaining <= 0);
+    free(buf);
+    return ok && (remaining <= 0);
 }
 
 bool executeRequest(
