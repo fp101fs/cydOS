@@ -34,6 +34,7 @@ void navBarCloseMenu() {
 static void backBtnCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
+    if (m3ModalIsLocked()) return;
     if (m3ModalIsOpen()) {
         m3ModalClose();
         return;
@@ -60,6 +61,7 @@ static void backBtnCb(lv_event_t* e) {
 static void homeBtnCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
+    if (m3ModalIsLocked()) return;
     if (m3ModalIsOpen()) m3ModalClose();
     closeMenu();
     if (m3KeyboardIsOpen()) m3KeyboardHide();
@@ -90,6 +92,7 @@ static void menuItemCb(lv_event_t* e) {
 static void menuBtnCb(lv_event_t* e) {
     (void)e;
     m3PulseFeedback();
+    if (m3ModalIsLocked()) return;
     if (!s_menuPopup) return;
     if (lv_obj_has_flag(s_menuPopup, LV_OBJ_FLAG_HIDDEN)) {
         navBarRefreshTheme();
