@@ -66,6 +66,15 @@ void appStoreFormatPartitionMeta(uint32_t offset,
                                  size_t outSize);
 uint8_t appStoreComputeSegmentWidthPct(uint32_t segmentBytes, uint32_t totalBytes);
 
+// Pure Web Upload (WUI) & Settings helpers (host-testable)
+bool appStoreIsValidDeviceTag(const char* tag);
+const char* appStoreBootPrefLabel(bool bootToApp);
+void appStoreFormatWebUiTransfer(uint32_t doneBytes,
+                                 uint32_t totalBytes,
+                                 uint8_t pct,
+                                 char* out,
+                                 size_t outSize);
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount);

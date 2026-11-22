@@ -233,6 +233,34 @@ static void testToolsPartitionHelpers() {
     assert(appStoreComputeSegmentWidthPct(5000000u, 4194304u) == 100);
 }
 
+static void testWebUiAndSettingsHelpers() {
+    // Device tag validation
+    assert(appStoreIsValidDeviceTag("CYD"));
+    assert(appStoreIsValidDeviceTag("CYD-2USB"));
+    assert(appStoreIsValidDeviceTag("  esp32_cyd_01  "));
+    assert(!appStoreIsValidDeviceTag(""));
+    assert(!appStoreIsValidDeviceTag("   "));
+    assert(!appStoreIsValidDeviceTag(nullptr));
+    assert(!appStoreIsValidDeviceTag("bad tag"));
+    assert(!appStoreIsValidDeviceTag("bad/tag"));
+    assert(!appStoreIsValidDeviceTag("this_tag_is_way_too_long_for_launcherhub"));
+
+    // Boot preference label
+    assert(strcmp(appStoreBootPrefLabel(false), "Pixel CYD (App Store)") == 0);
+    assert(strcmp(appStoreBootPrefLabel(true), "Last Launched App") == 0);
+
+    // WUI transfer formatting
+    char buf[48];
+    appStoreFormatWebUiTransfer(0, 0, 0, buf, sizeof(buf));
+    assert(strcmp(buf, "") == 0);
+    appStoreFormatWebUiTransfer(430080u, 1153433u, 37, buf, sizeof(buf));
+    assert(strcmp(buf, "420 KB / 1.1 MB (37%)") == 0);
+    appStoreFormatWebUiTransfer(524288u, 0, 0, buf, sizeof(buf));
+    assert(strcmp(buf, "512 KB") == 0);
+    appStoreFormatWebUiTransfer(1048576u, 1048576u, 120, buf, sizeof(buf));
+    assert(strcmp(buf, "1.0 MB / 1.0 MB (100%)") == 0);
+}
+
 int main() {
     testTabs();
     testStorageSummary();
@@ -241,6 +269,7 @@ int main() {
     testExploreHelpers();
     testSdCardHelpers();
     testToolsPartitionHelpers();
+    testWebUiAndSettingsHelpers();
     printf("[OK] test_app_store: all assertions passed\n");
     return 0;
 }

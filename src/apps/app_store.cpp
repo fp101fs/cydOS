@@ -266,6 +266,47 @@ uint8_t appStoreComputeSegmentWidthPct(uint32_t segmentBytes, uint32_t totalByte
     return static_cast<uint8_t>(pct);
 }
 
+bool appStoreIsValidDeviceTag(const char* tag) {
+    if (!tag) return false;
+    while (*tag == ' ' || *tag == '\t') ++tag;
+    size_t len = strlen(tag);
+    while (len > 0 && (tag[len - 1] == ' ' || tag[len - 1] == '\t')) --len;
+    if (len == 0 || len > 24) return false;
+    for (size_t i = 0; i < len; ++i) {
+        char c = tag[i];
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+const char* appStoreBootPrefLabel(bool bootToApp) {
+    return bootToApp ? "Last Launched App" : "Pixel CYD (App Store)";
+}
+
+void appStoreFormatWebUiTransfer(uint32_t doneBytes,
+                                 uint32_t totalBytes,
+                                 uint8_t pct,
+                                 char* out,
+                                 size_t outSize) {
+    if (!out || outSize == 0) return;
+    if (doneBytes == 0 && totalBytes == 0) {
+        out[0] = '\0';
+        return;
+    }
+    char doneBuf[20];
+    appStoreFormatSizeCompact(doneBytes, doneBuf, sizeof(doneBuf));
+    if (totalBytes > 0) {
+        char totBuf[20];
+        appStoreFormatSizeCompact(totalBytes, totBuf, sizeof(totBuf));
+        uint8_t safePct = pct > 100 ? 100 : pct;
+        snprintf(out, outSize, "%s / %s (%u%%)", doneBuf, totBuf, static_cast<unsigned>(safePct));
+    } else {
+        snprintf(out, outSize, "%s", doneBuf);
+    }
+}
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount) {
@@ -338,6 +379,8 @@ void appStoreFormatInstalledMeta(uint32_t appSizeBytes,
 #include "../launcher/partition_table_model.h"
 #include "../launcher/partitioner.h"
 #include "../launcher/sd_functions.h"
+#include "../launcher/webInterface.h"
+#include <WiFi.h>
 #include <algorithm>
 #include <esp_ota_ops.h>
 #include <functional>
@@ -464,11 +507,13 @@ std::vector<LauncherSdEntry> s_sdEntries;
 PendingSdAction s_pendingSdAction = PendingSdAction::None;
 size_t s_pendingSdIdx = 0;
 
-// --- Tools Tab State (PMan, Backup/Restore, Updates) ---
+// --- Tools Tab State (PMan, Backup/Restore, Updates, Web Upload, Settings) ---
 enum class ToolsSubView : uint8_t {
     Menu = 0,
     StoragePartitions,
-    BackupRestore
+    BackupRestore,
+    WebUpload,
+    Settings
 };
 
 enum class PendingToolsAction : uint8_t {
@@ -480,7 +525,14 @@ enum class PendingToolsAction : uint8_t {
     BackupApp,
     RestoreApp,
     ManageBackupEntry,
-    CheckUpdates
+    CheckUpdates,
+    StartWebUiSta,
+    StartWebUiAp,
+    StopWebUi,
+    LaunchLastWuiApp,
+    ResetBootToFactory,
+    EditDeviceTag,
+    ClearAppRegistry
 };
 
 struct ToolsBackupRow {
@@ -499,6 +551,13 @@ std::vector<LauncherPartitionEntry> s_pmanEntries;
 std::vector<ToolsBackupRow> s_backupRows;
 PendingToolsAction s_pendingToolsAction = PendingToolsAction::None;
 size_t s_pendingToolsIdx = 0;
+
+// Live Web Upload (WUI) widgets & polling timer
+lv_timer_t* s_wuiTimer = nullptr;
+lv_obj_t* s_wuiStatusLbl = nullptr;
+lv_obj_t* s_wuiProgBar = nullptr;
+lv_obj_t* s_wuiTransferLbl = nullptr;
+uint32_t s_wuiLastEventSeq = 0;
 
 void renderActiveTab();
 void updateTabBarStyle();
@@ -2853,6 +2912,83 @@ void asyncDispatchToolsAction(void* arg) {
         case PendingToolsAction::CheckUpdates:
             runCheckForAppUpdates();
             break;
+        case PendingToolsAction::StartWebUiSta: {
+            String err;
+            if (!launcherWebUiStart(false, &err)) {
+                launcherUiError(err.isEmpty() ? String("Could not start Web Upload server.") : err, "Web Upload");
+            } else {
+                m3ShowToast("Web Upload started", 1400);
+            }
+            if (s_storeBody) renderActiveTab();
+            break;
+        }
+        case PendingToolsAction::StartWebUiAp: {
+            String err;
+            if (!launcherWebUiStart(true, &err)) {
+                launcherUiError(err.isEmpty() ? String("Could not start Wi-Fi hotspot.") : err, "Web Upload");
+            } else {
+                m3ShowToast("Hotspot started", 1400);
+            }
+            if (s_storeBody) renderActiveTab();
+            break;
+        }
+        case PendingToolsAction::StopWebUi:
+            launcherWebUiStop();
+            m3ShowToast("Web Upload stopped", 1200);
+            if (s_storeBody) renderActiveTab();
+            break;
+        case PendingToolsAction::LaunchLastWuiApp: {
+            LauncherWebUiStatus st = launcherWebUiGetStatus();
+            if (st.lastInstalledLabel[0]) {
+                launcherWebUiStop();
+                launcherBootAppByLabel(st.lastInstalledLabel);
+            }
+            break;
+        }
+        case PendingToolsAction::ResetBootToFactory: {
+            LauncherPartitionTable table;
+            String err;
+            if (!launcherPartitionReadCurrent(table, &err) || !launcherPartitionClearOtaBoot(table, &err)) {
+                launcherUiError(err.isEmpty() ? String("Could not reset boot partition.") : err, "Boot Target");
+            } else {
+                g_launcherBootToApp = false;
+                launcherUiSaveState();
+                m3ShowToast("Next boot: Pixel CYD", 1500);
+            }
+            if (s_storeBody) renderActiveTab();
+            break;
+        }
+        case PendingToolsAction::EditDeviceTag:
+            openTextPromptModal("Device Tag", "e.g. CYD, CYD-2USB, ESP32", g_launcherOtaTag.c_str(), 24, "Save",
+                                [](const char* text) {
+                                    String tag(text ? text : "");
+                                    tag.trim();
+                                    if (!appStoreIsValidDeviceTag(tag.c_str())) {
+                                        launcherUiError("Use 1-24 letters, digits, '-' or '_'.", "Invalid Tag");
+                                        return;
+                                    }
+                                    launcherSetOtaTag(tag);
+                                    s_exploreLoaded = false;
+                                    s_exploreItems.clear();
+                                    m3ShowToast(("Tag set to " + tag).c_str(), 1400);
+                                    if (s_storeBody) renderActiveTab();
+                                });
+            break;
+        case PendingToolsAction::ClearAppRegistry: {
+            const char* body =
+                "Clears saved App names, data links, and Home Screen recency order in NVS.\n"
+                "Installed flash partitions are not erased.";
+            if (launcherUiConfirm("Clear App Registry?", body, "Clear", M3Color::CORAL)) {
+                if (launcherClearAppRegistry()) {
+                    launcherHomeSyncRefresh(true, false);
+                    m3ShowToast("App registry cleared", 1500);
+                } else {
+                    launcherUiError("Could not clear App registry.", "Registry");
+                }
+                if (s_storeBody) renderActiveTab();
+            }
+            break;
+        }
         default:
             break;
     }
@@ -3061,23 +3197,25 @@ void buildToolsMenuView(lv_obj_t* container) {
                        "Sync Home Screen", "Refresh dynamic App tiles on Home",
                        syncRefreshBtnCb, nullptr);
 
-    // 3. Compact footer note for upcoming Item 11 (WUI & Settings)
-    lv_obj_t* footCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 12);
-    lv_obj_set_style_pad_all(footCard, 7, 0);
-    lv_obj_set_style_pad_row(footCard, 2, 0);
-    lv_obj_set_flex_flow(footCard, LV_FLEX_FLOW_COLUMN);
+    // 3. Web Upload (WUI) & Store Settings
+    LauncherWebUiStatus wuiSt = launcherWebUiGetStatus();
+    String wuiSub = wuiSt.running ? (String("Online • ") + wuiSt.url)
+                                  : String("Upload & flash .bin from browser");
+    createToolsMenuRow(container, LV_SYMBOL_WIFI,
+                       wuiSt.running ? 0x1E3A2F : M3Color::PRIMARY_CONT,
+                       wuiSt.running ? M3Color::TERTIARY : M3Color::PRIMARY,
+                       "Web Upload (WUI)", wuiSub.c_str(),
+                       toolsNavSubViewCb,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(ToolsSubView::WebUpload)));
 
-    char tagBuf[48];
-    snprintf(tagBuf, sizeof(tagBuf), "Device Tag: %s", g_launcherOtaTag.c_str());
-    lv_obj_t* tagLbl = lv_label_create(footCard);
-    lv_label_set_text(tagLbl, tagBuf);
-    lv_obj_set_style_text_color(tagLbl, lv_color_hex(m3TextPrimaryHex()), 0);
-    lv_obj_set_style_text_font(tagLbl, &lv_font_montserrat_10, 0);
-
-    lv_obj_t* nextLbl = lv_label_create(footCard);
-    lv_label_set_text(nextLbl, "Next: Local Web Upload (WUI) & Store Settings");
-    lv_obj_set_style_text_color(nextLbl, lv_color_hex(m3TextSecondaryHex()), 0);
-    lv_obj_set_style_text_font(nextLbl, &lv_font_montserrat_10, 0);
+    char setSub[56];
+    snprintf(setSub, sizeof(setSub), "Tag: %s • %s",
+             g_launcherOtaTag.c_str(),
+             g_launcherBootToApp ? "Boot App" : "Boot Store");
+    createToolsMenuRow(container, LV_SYMBOL_SETTINGS, m3SurfaceHighestHex(), m3TextPrimaryHex(),
+                       "Store Settings", setSub,
+                       toolsNavSubViewCb,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(ToolsSubView::Settings)));
 }
 
 void buildStoragePartitionsView(lv_obj_t* container) {
@@ -3357,6 +3495,414 @@ void buildBackupRestoreView(lv_obj_t* container) {
     }
 }
 
+// --- Web Upload (WUI) & Store Settings Sub-Views ---
+
+void stopWuiTimer() {
+    if (s_wuiTimer) {
+        lv_timer_del(s_wuiTimer);
+        s_wuiTimer = nullptr;
+    }
+    s_wuiStatusLbl = nullptr;
+    s_wuiProgBar = nullptr;
+    s_wuiTransferLbl = nullptr;
+}
+
+void wuiPollTimerCb(lv_timer_t* timer) {
+    (void)timer;
+    launcherWebUiPoll();
+
+    if (!s_storeBody || s_activeTab != AppStoreTab::Tools || s_toolsSubView != ToolsSubView::WebUpload) {
+        return;
+    }
+
+    LauncherWebUiStatus st = launcherWebUiGetStatus();
+    if (!st.running) {
+        stopWuiTimer();
+        renderActiveTab();
+        return;
+    }
+
+    if (s_wuiStatusLbl) {
+        lv_label_set_text(s_wuiStatusLbl, st.statusText[0] ? st.statusText : "Waiting for browser...");
+        uint32_t col = m3TextPrimaryHex();
+        if (st.state == LauncherWebUiState::Success) col = M3Color::TERTIARY;
+        else if (st.state == LauncherWebUiState::Error) col = M3Color::CORAL;
+        else if (st.state == LauncherWebUiState::Flashing || st.state == LauncherWebUiState::Uploading) col = M3Color::PRIMARY;
+        lv_obj_set_style_text_color(s_wuiStatusLbl, lv_color_hex(col), 0);
+    }
+    if (s_wuiProgBar) {
+        bool active = (st.state == LauncherWebUiState::Uploading ||
+                       st.state == LauncherWebUiState::Flashing ||
+                       st.state == LauncherWebUiState::Success);
+        if (active) {
+            lv_obj_clear_flag(s_wuiProgBar, LV_OBJ_FLAG_HIDDEN);
+            lv_bar_set_value(s_wuiProgBar, st.progressPct, LV_ANIM_ON);
+        } else {
+            lv_obj_add_flag(s_wuiProgBar, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_wuiTransferLbl) {
+        char xfer[48];
+        appStoreFormatWebUiTransfer(st.bytesDone, st.bytesTotal, st.progressPct, xfer, sizeof(xfer));
+        lv_label_set_text(s_wuiTransferLbl, xfer);
+    }
+
+    if (st.eventSeq != s_wuiLastEventSeq) {
+        s_wuiLastEventSeq = st.eventSeq;
+        renderActiveTab();
+    }
+}
+
+void toolsStartWuiStaCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::StartWebUiSta);
+}
+
+void toolsStartWuiApCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::StartWebUiAp);
+}
+
+void toolsStopWuiCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::StopWebUi);
+}
+
+void toolsLaunchLastWuiCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::LaunchLastWuiApp);
+}
+
+void buildWebUploadView(lv_obj_t* container) {
+    buildToolsSubHeader(container, "Web Upload (WUI)");
+    LauncherWebUiStatus st = launcherWebUiGetStatus();
+    s_wuiLastEventSeq = st.eventSeq;
+
+    if (!st.running) {
+        stopWuiTimer();
+
+        lv_obj_t* hero = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+        lv_obj_set_style_pad_all(hero, 12, 0);
+        lv_obj_set_style_pad_row(hero, 8, 0);
+        lv_obj_set_flex_flow(hero, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(hero, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* ico = lv_label_create(hero);
+        lv_label_set_text(ico, LV_SYMBOL_WIFI);
+        lv_obj_set_style_text_color(ico, lv_color_hex(m3PrimaryHex()), 0);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_28, 0);
+
+        lv_obj_t* title = lv_label_create(hero);
+        lv_label_set_text(title, "Local Browser Upload");
+        lv_obj_set_style_text_color(title, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+
+        lv_obj_t* desc = lv_label_create(hero);
+        lv_label_set_text(desc, "Flash .bin Apps directly or upload files to SD from any phone or computer browser. Installed Apps sync to Home Screen #1.");
+        lv_obj_set_width(desc, LV_PCT(100));
+        lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(desc, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(desc, &lv_font_montserrat_10, 0);
+
+        bool wifiUp = (WiFi.status() == WL_CONNECTED);
+        if (wifiUp) {
+            String staLabel = String(LV_SYMBOL_WIFI "  Start on ") + WiFi.SSID();
+            lv_obj_t* staBtn = m3PillBtn(hero, staLabel.c_str(), M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 32);
+            lv_obj_add_event_cb(staBtn, toolsStartWuiStaCb, LV_EVENT_CLICKED, nullptr);
+
+            lv_obj_t* apBtn = m3PillBtn(hero, LV_SYMBOL_USB "  Start Hotspot (AP)",
+                                        m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 28);
+            lv_obj_add_event_cb(apBtn, toolsStartWuiApCb, LV_EVENT_CLICKED, nullptr);
+        } else {
+            lv_obj_t* apBtn = m3PillBtn(hero, LV_SYMBOL_WIFI "  Start Hotspot (AP)",
+                                        M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 32);
+            lv_obj_add_event_cb(apBtn, toolsStartWuiApCb, LV_EVENT_CLICKED, nullptr);
+
+            lv_obj_t* wifiBtn = m3PillBtn(hero, "Open Wi-Fi Settings",
+                                          m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 28);
+            lv_obj_add_event_cb(wifiBtn, openWifiSettingsCb, LV_EVENT_CLICKED, nullptr);
+        }
+        return;
+    }
+
+    // Active Server: QR Code + IP Card
+    lv_obj_t* qrCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+    lv_obj_set_style_pad_all(qrCard, 10, 0);
+    lv_obj_set_style_pad_row(qrCard, 6, 0);
+    lv_obj_set_flex_flow(qrCard, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(qrCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* qrWrap = lv_obj_create(qrCard);
+    lv_obj_set_size(qrWrap, 108, 108);
+    lv_obj_set_style_bg_color(qrWrap, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(qrWrap, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(qrWrap, 10, 0);
+    lv_obj_set_style_border_width(qrWrap, 0, 0);
+    lv_obj_set_style_pad_all(qrWrap, 6, 0);
+    lv_obj_clear_flag(qrWrap, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* qr = lv_qrcode_create(qrWrap, 96, lv_color_hex(0x0E1117), lv_color_hex(0xFFFFFF));
+    if (qr && st.url[0]) {
+        lv_qrcode_update(qr, st.url, strlen(st.url));
+        lv_obj_center(qr);
+    }
+
+    lv_obj_t* urlLbl = lv_label_create(qrCard);
+    lv_label_set_text(urlLbl, st.url);
+    lv_obj_set_style_text_color(urlLbl, lv_color_hex(M3Color::PRIMARY), 0);
+    lv_obj_set_style_text_font(urlLbl, &lv_font_montserrat_14, 0);
+
+    char netBuf[64];
+    snprintf(netBuf, sizeof(netBuf), "%s: %s%s",
+             st.apMode ? "Hotspot" : "Wi-Fi",
+             st.ssid[0] ? st.ssid : "Connected",
+             st.apMode ? " (open)" : "");
+    lv_obj_t* netLbl = lv_label_create(qrCard);
+    lv_label_set_text(netLbl, netBuf);
+    lv_obj_set_style_text_color(netLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(netLbl, &lv_font_montserrat_10, 0);
+
+    // Live Upload / Flash Status Card
+    lv_obj_t* stCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(stCard, 8, 0);
+    lv_obj_set_style_pad_row(stCard, 4, 0);
+    lv_obj_set_flex_flow(stCard, LV_FLEX_FLOW_COLUMN);
+
+    s_wuiStatusLbl = lv_label_create(stCard);
+    lv_label_set_text(s_wuiStatusLbl, st.statusText[0] ? st.statusText : "Waiting for browser...");
+    lv_obj_set_width(s_wuiStatusLbl, LV_PCT(100));
+    lv_label_set_long_mode(s_wuiStatusLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(s_wuiStatusLbl,
+                                lv_color_hex(st.state == LauncherWebUiState::Success ? M3Color::TERTIARY
+                                             : st.state == LauncherWebUiState::Error ? M3Color::CORAL
+                                                                                     : m3TextPrimaryHex()),
+                                0);
+    lv_obj_set_style_text_font(s_wuiStatusLbl, &lv_font_montserrat_12, 0);
+
+    s_wuiProgBar = lv_bar_create(stCard);
+    lv_obj_set_size(s_wuiProgBar, LV_PCT(100), 8);
+    lv_bar_set_range(s_wuiProgBar, 0, 100);
+    lv_bar_set_value(s_wuiProgBar, st.progressPct, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_wuiProgBar, lv_color_hex(m3SurfaceHighestHex()), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_wuiProgBar, lv_color_hex(M3Color::PRIMARY), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(s_wuiProgBar, M3Dim::RADIUS_PILL, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_wuiProgBar, M3Dim::RADIUS_PILL, LV_PART_INDICATOR);
+    if (st.state == LauncherWebUiState::Idle || st.state == LauncherWebUiState::Error) {
+        lv_obj_add_flag(s_wuiProgBar, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    char xfer[48];
+    appStoreFormatWebUiTransfer(st.bytesDone, st.bytesTotal, st.progressPct, xfer, sizeof(xfer));
+    s_wuiTransferLbl = lv_label_create(stCard);
+    lv_label_set_text(s_wuiTransferLbl, xfer);
+    lv_obj_set_style_text_color(s_wuiTransferLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(s_wuiTransferLbl, &lv_font_montserrat_10, 0);
+
+    if (st.lastInstalledLabel[0]) {
+        String launchTxt = String(LV_SYMBOL_PLAY "  Launch ") +
+                           (st.lastInstalledName[0] ? st.lastInstalledName : st.lastInstalledLabel);
+        lv_obj_t* launchBtn = m3PillBtn(stCard, launchTxt.c_str(), M3Color::TERTIARY, 0x0E1117, LV_PCT(100), 30);
+        lv_obj_add_event_cb(launchBtn, toolsLaunchLastWuiCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    lv_obj_t* stopBtn = m3PillBtn(container, LV_SYMBOL_CLOSE "  Stop Web Server",
+                                  M3Color::CORAL, 0x0E1117, LV_PCT(100), 30);
+    lv_obj_add_event_cb(stopBtn, toolsStopWuiCb, LV_EVENT_CLICKED, nullptr);
+
+    if (!s_wuiTimer) {
+        s_wuiTimer = lv_timer_create(wuiPollTimerCb, 250, nullptr);
+    }
+}
+
+void settingsBootSwitchCb(lv_event_t* e) {
+    lv_obj_t* sw = lv_event_get_target(e);
+    g_launcherBootToApp = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    launcherUiSaveState();
+    m3PulseFeedback();
+    m3ShowToast(appStoreBootPrefLabel(g_launcherBootToApp), 1300);
+    if (s_storeBody) renderActiveTab();
+}
+
+void settingsAutoBackupSwitchCb(lv_event_t* e) {
+    lv_obj_t* sw = lv_event_get_target(e);
+    g_launcherAutoBackup = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    launcherUiSaveState();
+    m3PulseFeedback();
+    m3ShowToast(g_launcherAutoBackup ? "Auto-backup enabled" : "Auto-backup disabled", 1200);
+}
+
+void settingsResetBootBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::ResetBootToFactory);
+}
+
+void settingsEditTagBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::EditDeviceTag);
+}
+
+void settingsPresetTagCb(lv_event_t* e) {
+    m3PulseFeedback();
+    const char* preset = static_cast<const char*>(lv_event_get_user_data(e));
+    if (!preset || !preset[0]) return;
+    launcherSetOtaTag(String(preset));
+    s_exploreLoaded = false;
+    s_exploreItems.clear();
+    m3ShowToast((String("Tag: ") + preset).c_str(), 1200);
+    renderActiveTab();
+}
+
+void settingsClearRegistryCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::ClearAppRegistry);
+}
+
+void buildSettingsView(lv_obj_t* container) {
+    buildToolsSubHeader(container, "Store Settings");
+
+    // 1. Boot Target Preference
+    lv_obj_t* bootCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(bootCard, 9, 0);
+    lv_obj_set_style_pad_row(bootCard, 6, 0);
+    lv_obj_set_flex_flow(bootCard, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* bootRow = lv_obj_create(bootCard);
+    lv_obj_set_size(bootRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(bootRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bootRow, 0, 0);
+    lv_obj_set_style_pad_all(bootRow, 0, 0);
+    lv_obj_set_flex_flow(bootRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bootRow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(bootRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bCol = lv_obj_create(bootRow);
+    lv_obj_set_height(bCol, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(bCol, 1);
+    lv_obj_set_style_bg_opa(bCol, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bCol, 0, 0);
+    lv_obj_set_style_pad_all(bCol, 0, 0);
+    lv_obj_set_flex_flow(bCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(bCol, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bTitle = lv_label_create(bCol);
+    lv_label_set_text(bTitle, "Boot Into Last App");
+    lv_obj_set_style_text_color(bTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(bTitle, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* bSub = lv_label_create(bCol);
+    lv_label_set_text(bSub, appStoreBootPrefLabel(g_launcherBootToApp));
+    lv_obj_set_style_text_color(bSub, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(bSub, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* bootSw = lv_switch_create(bootRow);
+    lv_obj_set_size(bootSw, 40, 22);
+    if (g_launcherBootToApp) lv_obj_add_state(bootSw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(bootSw, settingsBootSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    const esp_partition_t* bootPart = esp_ota_get_boot_partition();
+    bool bootingOta = bootPart && bootPart->type == ESP_PARTITION_TYPE_APP &&
+                      bootPart->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_0;
+    String activeSlot = bootingOta ? launcherAppDisplayNameForLabel(bootPart->label)
+                                   : String("Pixel CYD (factory)");
+    m3InfoRow(bootCard, "Next Boot Slot", activeSlot.c_str());
+
+    if (bootingOta) {
+        lv_obj_t* rstBtn = m3PillBtn(bootCard, LV_SYMBOL_HOME "  Reset Boot to Pixel CYD",
+                                     M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 26);
+        lv_obj_add_event_cb(rstBtn, settingsResetBootBtnCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // 2. Auto-Backup Toggle
+    lv_obj_t* bkpCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(bkpCard, 9, 0);
+    lv_obj_set_flex_flow(bkpCard, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bkpCard, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* bkCol = lv_obj_create(bkpCard);
+    lv_obj_set_height(bkCol, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(bkCol, 1);
+    lv_obj_set_style_bg_opa(bkCol, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bkCol, 0, 0);
+    lv_obj_set_style_pad_all(bkCol, 0, 0);
+    lv_obj_set_flex_flow(bkCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(bkCol, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bkTitle = lv_label_create(bkCol);
+    lv_label_set_text(bkTitle, "Auto-Backup App Data");
+    lv_obj_set_style_text_color(bkTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(bkTitle, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* bkSub = lv_label_create(bkCol);
+    lv_label_set_text(bkSub, "Save data partitions to SD");
+    lv_obj_set_style_text_color(bkSub, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(bkSub, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* bkSw = lv_switch_create(bkpCard);
+    lv_obj_set_size(bkSw, 40, 22);
+    if (g_launcherAutoBackup) lv_obj_add_state(bkSw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(bkSw, settingsAutoBackupSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // 3. Device Tag (LauncherHub hardware filter)
+    lv_obj_t* tagCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(tagCard, 9, 0);
+    lv_obj_set_style_pad_row(tagCard, 6, 0);
+    lv_obj_set_flex_flow(tagCard, LV_FLEX_FLOW_COLUMN);
+
+    m3InfoRow(tagCard, "Device Tag", g_launcherOtaTag.c_str());
+
+    lv_obj_t* presetRow = lv_obj_create(tagCard);
+    lv_obj_set_size(presetRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(presetRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(presetRow, 0, 0);
+    lv_obj_set_style_pad_all(presetRow, 0, 0);
+    lv_obj_set_style_pad_column(presetRow, 4, 0);
+    lv_obj_set_flex_flow(presetRow, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(presetRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    static const char* kTagPresets[3] = {"CYD", "CYD-2USB", "ESP32"};
+    for (int i = 0; i < 3; ++i) {
+        bool active = (g_launcherOtaTag == kTagPresets[i]);
+        createCompactChip(presetRow, kTagPresets[i],
+                          active ? M3Color::PRIMARY_CONT : m3SurfaceHighestHex(),
+                          active ? M3Color::PRIMARY : m3TextSecondaryHex(),
+                          settingsPresetTagCb, const_cast<char*>(kTagPresets[i]));
+    }
+
+    lv_obj_t* editTagBtn = m3PillBtn(tagCard, LV_SYMBOL_EDIT "  Custom Device Tag",
+                                     m3SurfaceHighestHex(), m3TextPrimaryHex(), LV_PCT(100), 26);
+    lv_obj_add_event_cb(editTagBtn, settingsEditTagBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    // 4. Clear App Registry
+    lv_obj_t* regCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(regCard, 9, 0);
+    lv_obj_set_style_pad_row(regCard, 6, 0);
+    lv_obj_set_flex_flow(regCard, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* rTitle = lv_label_create(regCard);
+    lv_label_set_text(rTitle, "App Registry (NVS)");
+    lv_obj_set_style_text_color(rTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(rTitle, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* rDesc = lv_label_create(regCard);
+    lv_label_set_text(rDesc, "Resets stored App names, Home Screen order, and data partition links.");
+    lv_obj_set_width(rDesc, LV_PCT(100));
+    lv_label_set_long_mode(rDesc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(rDesc, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(rDesc, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* clrBtn = m3PillBtn(regCard, LV_SYMBOL_TRASH "  Clear App Registry",
+                                 M3Color::CORAL, 0x0E1117, LV_PCT(100), 28);
+    lv_obj_add_event_cb(clrBtn, settingsClearRegistryCb, LV_EVENT_CLICKED, nullptr);
+}
+
 void buildToolsTab(lv_obj_t* container) {
     switch (s_toolsSubView) {
         case ToolsSubView::StoragePartitions:
@@ -3364,6 +3910,12 @@ void buildToolsTab(lv_obj_t* container) {
             break;
         case ToolsSubView::BackupRestore:
             buildBackupRestoreView(container);
+            break;
+        case ToolsSubView::WebUpload:
+            buildWebUploadView(container);
+            break;
+        case ToolsSubView::Settings:
+            buildSettingsView(container);
             break;
         case ToolsSubView::Menu:
         default:
@@ -3393,6 +3945,11 @@ void updateTabBarStyle() {
 
 void renderActiveTab() {
     if (!s_tabContent) return;
+    if (s_activeTab != AppStoreTab::Tools || s_toolsSubView != ToolsSubView::WebUpload) {
+        s_wuiStatusLbl = nullptr;
+        s_wuiProgBar = nullptr;
+        s_wuiTransferLbl = nullptr;
+    }
     lv_obj_clean(s_tabContent);
     lv_obj_scroll_to_y(s_tabContent, 0, LV_ANIM_OFF);
 
@@ -3417,6 +3974,10 @@ void renderActiveTab() {
 
 void storeBodyDeleteCb(lv_event_t* e) {
     (void)e;
+    stopWuiTimer();
+    if (launcherWebUiIsRunning()) {
+        launcherWebUiStop();
+    }
     closeTextPromptModal();
     s_storeBody = nullptr;
     s_tabBar = nullptr;
