@@ -193,6 +193,34 @@ BackupInstallInfo loadInstalledFromConfig(const String &appNum) {
     return result;
 }
 
+std::vector<BackupInstallInfo> listAllBackupEntries() {
+    std::vector<BackupInstallInfo> list;
+    JsonDocument doc;
+    if (!readBackupDoc(doc)) return list;
+
+    JsonArray arr = doc["Installed"].as<JsonArray>();
+    if (arr.isNull()) return list;
+
+    for (JsonObject entry : arr) {
+        BackupInstallInfo info;
+        info.appNum = entry["appNum"].as<String>();
+        info.sdFilepath = entry["filepath"].as<String>();
+        info.appName = entry["appName"].as<String>();
+        JsonArray dataArr = entry["data"].as<JsonArray>();
+        if (!dataArr.isNull()) {
+            for (JsonObject dataEntry : dataArr) {
+                BackupPartitionInfo part;
+                part.type = dataEntry["type"].as<String>();
+                part.label = dataEntry["label"].as<String>();
+                part.lastBackupPath = dataEntry["filepath"].as<String>();
+                info.partitions.push_back(part);
+            }
+        }
+        if (!info.appNum.isEmpty()) list.push_back(info);
+    }
+    return list;
+}
+
 String findAppNumByFilepath(const String &sdFilepath) {
     JsonDocument doc;
     if (!readBackupDoc(doc)) return "";
@@ -419,6 +447,14 @@ bool restorePartitionFromBackup(const char *partitionLabel, const char *backupFi
         esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, partitionLabel);
     if (!part) {
         inFile.close();
+        uint32_t flashOffset = 0;
+        uint32_t regionSize = 0;
+        if (resolveDataRegion(partitionLabel, flashOffset, regionSize) && regionSize > 0) {
+            launcherUiBeginProgress("Restore Data", (String("Restoring ") + partitionLabel + "...").c_str());
+            bool ok = restorePartitionFromBackupDirect(partitionLabel, backupFilePath, flashOffset, regionSize);
+            if (ok) launcherUiFinish(true, "Data Restored", partitionLabel);
+            return ok;
+        }
         launcherConsolePrintf("restorePartitionFromBackup: partition '%s' not found, skipping\n", partitionLabel);
         return true;
     }

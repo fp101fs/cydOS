@@ -181,6 +181,58 @@ static void testSdCardHelpers() {
     assert(!appStoreIsValidSdName("bad*name"));
 }
 
+static void testToolsPartitionHelpers() {
+    // Kind labels
+    assert(strcmp(appStorePartitionKindLabel(0x00, 0x00), "System") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x00, 0x20), "System") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x00, 0x10), "App") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x00), "OTA Data") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x02), "NVS") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x81), "FAT") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x82), "SPIFFS") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x83), "LittleFS") == 0);
+    assert(strcmp(appStorePartitionKindLabel(0x01, 0x99), "Data") == 0);
+
+    // Short tags
+    assert(strcmp(appStorePartitionShortTag(0x00, 0x00), "SYS") == 0);
+    assert(strcmp(appStorePartitionShortTag(0x00, 0x12), "APP") == 0);
+    assert(strcmp(appStorePartitionShortTag(0x01, 0x02), "NVS") == 0);
+    assert(strcmp(appStorePartitionShortTag(0x01, 0x81), "FAT") == 0);
+    assert(strcmp(appStorePartitionShortTag(0x01, 0x82), "SFS") == 0);
+    assert(strcmp(appStorePartitionShortTag(0x01, 0x83), "LFS") == 0);
+
+    // Protection rules
+    assert(appStoreIsProtectedPartition(0x00, 0x00));  // factory
+    assert(appStoreIsProtectedPartition(0x00, 0x20));  // test
+    assert(appStoreIsProtectedPartition(0x01, 0x00));  // otadata
+    assert(appStoreIsProtectedPartition(0x01, 0x02));  // nvs
+    assert(!appStoreIsProtectedPartition(0x00, 0x10)); // ota_0
+    assert(!appStoreIsProtectedPartition(0x01, 0x81)); // fat
+    assert(!appStoreIsProtectedPartition(0x01, 0x82)); // spiffs
+    assert(!appStoreIsProtectedPartition(0x01, 0x83)); // littlefs
+
+    // Distinct colors for System, App, Data, Meta
+    uint32_t cSys = appStorePartitionColorHex(0x00, 0x00);
+    uint32_t cApp = appStorePartitionColorHex(0x00, 0x10);
+    uint32_t cDat = appStorePartitionColorHex(0x01, 0x81);
+    uint32_t cNvs = appStorePartitionColorHex(0x01, 0x02);
+    assert(cSys != cApp && cApp != cDat && cDat != cNvs);
+
+    // Partition meta formatting
+    char buf[64];
+    appStoreFormatPartitionMeta(0x210000u, 1258291u, 0x00, 0x10, buf, sizeof(buf));
+    assert(strcmp(buf, "0x210000 • 1.2 MB • App") == 0);
+    appStoreFormatPartitionMeta(0x9000u, 20480u, 0x01, 0x02, buf, sizeof(buf));
+    assert(strcmp(buf, "0x009000 • 20 KB • NVS") == 0);
+
+    // Segment width pct
+    assert(appStoreComputeSegmentWidthPct(0, 4194304u) == 0);
+    assert(appStoreComputeSegmentWidthPct(20480u, 0) == 0);
+    assert(appStoreComputeSegmentWidthPct(20480u, 4194304u) == 1); // minimum visible 1%
+    assert(appStoreComputeSegmentWidthPct(2097152u, 4194304u) == 50);
+    assert(appStoreComputeSegmentWidthPct(5000000u, 4194304u) == 100);
+}
+
 int main() {
     testTabs();
     testStorageSummary();
@@ -188,6 +240,7 @@ int main() {
     testInstalledMetaFormatting();
     testExploreHelpers();
     testSdCardHelpers();
+    testToolsPartitionHelpers();
     printf("[OK] test_app_store: all assertions passed\n");
     return 0;
 }

@@ -193,6 +193,79 @@ bool appStoreIsValidSdName(const char* name) {
     return true;
 }
 
+const char* appStorePartitionKindLabel(uint8_t type, uint8_t subtype) {
+    if (type == 0x00) {
+        if (subtype == 0x00 || subtype == 0x20) return "System";
+        return "App";
+    }
+    if (type == 0x01) {
+        switch (subtype) {
+            case 0x00: return "OTA Data";
+            case 0x02: return "NVS";
+            case 0x81: return "FAT";
+            case 0x82: return "SPIFFS";
+            case 0x83: return "LittleFS";
+            default:   return "Data";
+        }
+    }
+    return "Other";
+}
+
+const char* appStorePartitionShortTag(uint8_t type, uint8_t subtype) {
+    if (type == 0x00) {
+        return (subtype == 0x00 || subtype == 0x20) ? "SYS" : "APP";
+    }
+    if (type == 0x01) {
+        switch (subtype) {
+            case 0x00: return "OTA";
+            case 0x02: return "NVS";
+            case 0x81: return "FAT";
+            case 0x82: return "SFS";
+            case 0x83: return "LFS";
+            default:   return "DAT";
+        }
+    }
+    return "OTH";
+}
+
+uint32_t appStorePartitionColorHex(uint8_t type, uint8_t subtype) {
+    if (type == 0x00) {
+        return (subtype == 0x00 || subtype == 0x20) ? 0x4285F4u : 0x34A853u;
+    }
+    if (type == 0x01) {
+        if (subtype == 0x81 || subtype == 0x82 || subtype == 0x83) return 0xFBBC04u;
+        return 0xA78BFAu;
+    }
+    return 0x9AA0A6u;
+}
+
+bool appStoreIsProtectedPartition(uint8_t type, uint8_t subtype) {
+    if (type == 0x00 && (subtype == 0x00 || subtype == 0x20)) return true;
+    if (type == 0x01 && (subtype == 0x00 || subtype == 0x02)) return true;
+    return false;
+}
+
+void appStoreFormatPartitionMeta(uint32_t offset,
+                                 uint32_t sizeBytes,
+                                 uint8_t type,
+                                 uint8_t subtype,
+                                 char* out,
+                                 size_t outSize) {
+    if (!out || outSize == 0) return;
+    char szBuf[24];
+    appStoreFormatSizeCompact(sizeBytes, szBuf, sizeof(szBuf));
+    snprintf(out, outSize, "0x%06X • %s • %s",
+             static_cast<unsigned>(offset), szBuf, appStorePartitionKindLabel(type, subtype));
+}
+
+uint8_t appStoreComputeSegmentWidthPct(uint32_t segmentBytes, uint32_t totalBytes) {
+    if (segmentBytes == 0 || totalBytes == 0) return 0;
+    uint64_t pct = (static_cast<uint64_t>(segmentBytes) * 100u + (totalBytes / 2u)) / totalBytes;
+    if (pct < 1u) return 1u;
+    if (pct > 100u) return 100u;
+    return static_cast<uint8_t>(pct);
+}
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount) {
@@ -263,7 +336,9 @@ void appStoreFormatInstalledMeta(uint32_t appSizeBytes,
 #include "../launcher/launcher_ui_bridge.h"
 #include "../launcher/onlineLauncher.h"
 #include "../launcher/partition_table_model.h"
+#include "../launcher/partitioner.h"
 #include "../launcher/sd_functions.h"
+#include <algorithm>
 #include <esp_ota_ops.h>
 #include <functional>
 #include <vector>
@@ -389,10 +464,47 @@ std::vector<LauncherSdEntry> s_sdEntries;
 PendingSdAction s_pendingSdAction = PendingSdAction::None;
 size_t s_pendingSdIdx = 0;
 
+// --- Tools Tab State (PMan, Backup/Restore, Updates) ---
+enum class ToolsSubView : uint8_t {
+    Menu = 0,
+    StoragePartitions,
+    BackupRestore
+};
+
+enum class PendingToolsAction : uint8_t {
+    None = 0,
+    CompactFlash,
+    DumpTable,
+    PartitionMenu,
+    BackupAllApps,
+    BackupApp,
+    RestoreApp,
+    ManageBackupEntry,
+    CheckUpdates
+};
+
+struct ToolsBackupRow {
+    String appNum;
+    String appName;
+    String appLabel; // non-empty when currently installed
+    uint8_t dataPartCount = 0;
+    bool isInstalled = false;
+    bool hasBackup = false;
+    std::vector<String> fatLabels;
+    String spiffsLabel;
+};
+
+ToolsSubView s_toolsSubView = ToolsSubView::Menu;
+std::vector<LauncherPartitionEntry> s_pmanEntries;
+std::vector<ToolsBackupRow> s_backupRows;
+PendingToolsAction s_pendingToolsAction = PendingToolsAction::None;
+size_t s_pendingToolsIdx = 0;
+
 void renderActiveTab();
 void updateTabBarStyle();
 void queueExploreAction(PendingExploreAction action, size_t itemIdx = 0, const char* url = nullptr);
 void queueSdAction(PendingSdAction action, size_t entryIdx = 0);
+void queueToolsAction(PendingToolsAction action, size_t idx = 0);
 
 AppStoreStorageSummary computeLiveStorageSummary(const LauncherPartitionTable* tableOpt, uint8_t installedCount) {
     LauncherPartitionTable localTable;
@@ -683,6 +795,9 @@ void switchTabBtnCb(lv_event_t* e) {
                 s_sdCurrentPath = homePath;
                 renderActiveTab();
             }
+        } else if (next == AppStoreTab::Tools && s_toolsSubView != ToolsSubView::Menu) {
+            s_toolsSubView = ToolsSubView::Menu;
+            renderActiveTab();
         }
         return;
     }
@@ -2317,46 +2432,944 @@ void buildSdCardTab(lv_obj_t* container) {
     }
 }
 
-void buildToolsPlaceholderTab(lv_obj_t* container) {
-    AppStoreStorageSummary storage = computeLiveStorageSummary(nullptr, appGetDynamicCount());
+// ============================================================================
+// Tools Tab (Storage & Partitions / PMan, Backup & Restore, Check for Updates)
+// ============================================================================
 
-    lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 4, 0);
+struct FlashBarSegment {
+    uint32_t offset;
+    uint32_t size;
+    uint32_t colorHex;
+    FlashBarSegment(uint32_t o = 0, uint32_t s = 0, uint32_t c = 0x4285F4)
+        : offset(o), size(s), colorHex(c) {}
+};
 
-    lv_obj_t* title = lv_label_create(card);
-    lv_label_set_text(title, LV_SYMBOL_SETTINGS "  App Store Tools");
-    lv_obj_set_style_text_color(title, lv_color_hex(m3PrimaryHex()), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+void buildFlashMapBar(lv_obj_t* parent, const LauncherPartitionTable& table) {
+    if (table.flashSize == 0) return;
 
-    char poolStr[20], usedStr[20], freeStr[20];
-    appStoreFormatSizeCompact(storage.dynamicTotalBytes, poolStr, sizeof(poolStr));
-    appStoreFormatSizeCompact(storage.usedBytes, usedStr, sizeof(usedStr));
-    appStoreFormatSizeCompact(storage.freeBytes, freeStr, sizeof(freeStr));
+    std::vector<FlashBarSegment> segs;
+    for (const LauncherPartitionEntry& e : table.entries) {
+        if (e.size == 0) continue;
+        segs.push_back({e.offset, e.size, appStorePartitionColorHex(e.type, e.subtype)});
+    }
+    std::vector<LauncherPartitionRange> freeRanges = launcherPartitionFreeRanges(table);
+    uint32_t freeHex = m3SurfaceHighestHex();
+    for (const LauncherPartitionRange& r : freeRanges) {
+        if (r.size == 0) continue;
+        segs.push_back({r.offset, r.size, freeHex});
+    }
+    std::sort(segs.begin(), segs.end(), [](const FlashBarSegment& a, const FlashBarSegment& b) {
+        return a.offset < b.offset;
+    });
 
-    m3InfoRow(card, "Dynamic Pool", poolStr);
-    m3InfoRow(card, "Used / Free", (String(usedStr) + " / " + freeStr).c_str());
-    m3InfoRow(card, "Device Tag", g_launcherOtaTag.c_str());
+    lv_obj_t* bar = lv_obj_create(parent);
+    lv_obj_set_size(bar, LV_PCT(100), 14);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(freeHex), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bar, M3Dim::RADIUS_PILL, 0);
+    lv_obj_set_style_border_width(bar, 1, 0);
+    lv_obj_set_style_border_color(bar, lv_color_hex(m3OutlineHex()), 0);
+    lv_obj_set_style_border_opa(bar, LV_OPA_40, 0);
+    lv_obj_set_style_pad_all(bar, 0, 0);
+    lv_obj_set_style_pad_column(bar, 1, 0);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_clip_corner(bar, true, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* syncBtn = m3PillBtn(card, LV_SYMBOL_REFRESH "  Sync Home Screen",
-                                  M3Color::PRIMARY_CONT, M3Color::PRIMARY, LV_PCT(100), 32);
-    lv_obj_add_event_cb(syncBtn, syncRefreshBtnCb, LV_EVENT_CLICKED, nullptr);
+    for (const FlashBarSegment& seg : segs) {
+        uint8_t pct = appStoreComputeSegmentWidthPct(seg.size, table.flashSize);
+        if (pct == 0) continue;
+        lv_obj_t* part = lv_obj_create(bar);
+        lv_obj_set_height(part, LV_PCT(100));
+        lv_obj_set_flex_grow(part, pct);
+        lv_obj_set_style_min_width(part, 3, 0);
+        lv_obj_set_style_bg_color(part, lv_color_hex(seg.colorHex), 0);
+        lv_obj_set_style_bg_opa(part, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(part, 0, 0);
+        lv_obj_set_style_radius(part, 0, 0);
+        lv_obj_set_style_pad_all(part, 0, 0);
+        lv_obj_clear_flag(part, LV_OBJ_FLAG_SCROLLABLE);
+    }
 
-    lv_obj_t* roadCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
-    lv_obj_set_flex_flow(roadCard, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(roadCard, 3, 0);
+    // Compact legend row
+    lv_obj_t* leg = lv_obj_create(parent);
+    lv_obj_set_size(leg, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(leg, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(leg, 0, 0);
+    lv_obj_set_style_pad_all(leg, 0, 0);
+    lv_obj_set_style_pad_column(leg, 8, 0);
+    lv_obj_set_flex_flow(leg, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(leg, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(leg, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* rTitle = lv_label_create(roadCard);
-    lv_label_set_text(rTitle, "Coming in Tools");
-    lv_obj_set_style_text_color(rTitle, lv_color_hex(m3TextPrimaryHex()), 0);
-    lv_obj_set_style_text_font(rTitle, &lv_font_montserrat_12, 0);
+    const struct { const char* name; uint32_t hex; } items[4] = {
+        {"Sys",  0x4285F4u},
+        {"App",  0x34A853u},
+        {"Data", 0xFBBC04u},
+        {"Free", freeHex}
+    };
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t* item = lv_obj_create(leg);
+        lv_obj_set_size(item, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(item, 0, 0);
+        lv_obj_set_style_pad_all(item, 0, 0);
+        lv_obj_set_style_pad_column(item, 3, 0);
+        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* rDesc = lv_label_create(roadCard);
-    lv_label_set_text(rDesc, "• Storage & Partitions (PMan)\n• Backup / Restore Manager\n• Web Upload (WUI) & Store Settings");
-    lv_obj_set_width(rDesc, LV_PCT(100));
-    lv_label_set_long_mode(rDesc, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(rDesc, lv_color_hex(m3TextSecondaryHex()), 0);
-    lv_obj_set_style_text_font(rDesc, &lv_font_montserrat_10, 0);
+        lv_obj_t* dot = lv_obj_create(item);
+        lv_obj_set_size(dot, 7, 7);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(items[i].hex), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* lbl = lv_label_create(item);
+        lv_label_set_text(lbl, items[i].name);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+}
+
+bool ensureBackupConfigForToolsRow(const ToolsBackupRow& row, String& outAppNum) {
+    outAppNum = row.appNum;
+    if (outAppNum.isEmpty()) {
+        outAppNum = launcherGenerateAppNum(String("app:") + row.appLabel);
+    }
+
+    BackupInstallInfo existing = loadInstalledFromConfig(outAppNum);
+    if (!existing.appNum.isEmpty() && !existing.partitions.empty()) {
+        return true;
+    }
+
+    LauncherPartitionTable table;
+    launcherPartitionReadCurrent(table);
+
+    BackupInstallInfo info;
+    info.appNum = outAppNum;
+    info.appName = row.appName;
+    info.sdFilepath = existing.sdFilepath;
+
+    for (const String& fatLbl : row.fatLabels) {
+        if (fatLbl.isEmpty()) continue;
+        BackupPartitionInfo p;
+        p.type = "FAT";
+        p.label = fatLbl;
+        info.partitions.push_back(p);
+    }
+    if (!row.spiffsLabel.isEmpty()) {
+        BackupPartitionInfo p;
+        p.label = row.spiffsLabel;
+        p.type = "SPIFFS";
+        const LauncherPartitionEntry* entry = launcherPartitionFindByLabel(table, row.spiffsLabel.c_str());
+        if (entry && entry->subtype == 0x83) p.type = "LittleFS";
+        info.partitions.push_back(p);
+    }
+    if (info.partitions.empty()) return false;
+    return saveInstalledToConfig(info);
+}
+
+std::vector<ToolsBackupRow> collectToolsBackupRows() {
+    std::vector<ToolsBackupRow> rows;
+    std::vector<InstalledRowData> installed = collectInstalledRows(nullptr);
+
+    for (const InstalledRowData& inst : installed) {
+        String num = inst.appNum;
+        if (num.isEmpty()) num = launcherGenerateAppNum(String("app:") + inst.label);
+        BackupInstallInfo bkp = loadInstalledFromConfig(num);
+        bool hasBkp = hasRestorableBackup(bkp);
+        uint8_t partCount = inst.dataPartCount > 0
+                                ? inst.dataPartCount
+                                : static_cast<uint8_t>(bkp.partitions.size());
+        if (partCount == 0 && !hasBkp) continue;
+
+        ToolsBackupRow r;
+        r.appNum = num;
+        r.appName = inst.name;
+        r.appLabel = inst.label;
+        r.dataPartCount = partCount;
+        r.isInstalled = true;
+        r.hasBackup = hasBkp;
+        r.fatLabels = inst.fatLabels;
+        r.spiffsLabel = inst.spiffsLabel;
+        rows.push_back(r);
+    }
+
+    // Append any archived backup records from /bkp/backupData.json not currently installed
+    std::vector<BackupInstallInfo> saved = listAllBackupEntries();
+    for (const BackupInstallInfo& entry : saved) {
+        bool seen = false;
+        for (const ToolsBackupRow& existing : rows) {
+            if (existing.appNum == entry.appNum) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        ToolsBackupRow r;
+        r.appNum = entry.appNum;
+        r.appName = entry.appName.isEmpty() ? entry.appNum : entry.appName;
+        r.dataPartCount = static_cast<uint8_t>(entry.partitions.size());
+        r.isInstalled = false;
+        r.hasBackup = hasRestorableBackup(entry);
+        rows.push_back(r);
+    }
+    return rows;
+}
+
+void pickRestoreBinAndFlash(const LauncherPartitionEntry& entry) {
+    if (!setupSdCard()) {
+        launcherUiError("Insert a FAT32 SD card to restore a partition.", "SD Card Required");
+        return;
+    }
+
+    std::vector<LauncherSdEntry> candidates;
+    const char* searchDirs[2] = {"/dumps", "/downloads"};
+    for (int d = 0; d < 2; ++d) {
+        if (!SD.exists(searchDirs[d])) continue;
+        std::vector<LauncherSdEntry> list;
+        if (listSdDirectory(searchDirs[d], list, true, true)) {
+            for (const LauncherSdEntry& item : list) {
+                if (!item.isDir && appStoreIsBinFile(item.name.c_str())) {
+                    candidates.push_back(item);
+                }
+            }
+        }
+    }
+
+    if (candidates.empty()) {
+        launcherUiInfo("No .bin files found in /dumps or /downloads on SD card.", "Restore Partition");
+        return;
+    }
+
+    std::vector<LauncherUiOption> opts;
+    for (const LauncherSdEntry& c : candidates) {
+        char szBuf[20];
+        appStoreFormatSizeCompact(static_cast<uint32_t>(c.size), szBuf, sizeof(szBuf));
+        String label = c.name + " (" + szBuf + ")";
+        String fullPath = c.fullPath;
+        opts.push_back({label, [entry, fullPath]() {
+            launcherRestorePartitionFromSd(entry, fullPath.c_str());
+        }});
+    }
+    String sub = String("Restore into ") + entry.label;
+    launcherUiSelectOption("Select .bin File", opts, sub.c_str());
+}
+
+void runPartitionMenu(const LauncherPartitionEntry& entry) {
+    char metaBuf[64];
+    appStoreFormatPartitionMeta(entry.offset, entry.size, entry.type, entry.subtype, metaBuf, sizeof(metaBuf));
+
+    std::vector<LauncherUiOption> opts;
+    opts.push_back({String(LV_SYMBOL_SAVE "  Dump to SD (/dumps)"), [entry]() {
+        launcherDumpPartitionToSd(entry);
+    }});
+
+    bool protectedPart = appStoreIsProtectedPartition(entry.type, entry.subtype);
+    if (!protectedPart) {
+        opts.push_back({String(LV_SYMBOL_UPLOAD "  Restore from SD (.bin)"), [entry]() {
+            pickRestoreBinAndFlash(entry);
+        }});
+    }
+
+    if (entry.isOtaApp()) {
+        String lbl(entry.label);
+        opts.push_back({String(LV_SYMBOL_PLAY "  Launch App"), [lbl]() {
+            launcherBootAppByLabel(lbl.c_str());
+        }});
+        opts.push_back({String(LV_SYMBOL_TRASH "  Uninstall App"), [lbl]() {
+            launcherDeleteAppByLabel(lbl.c_str(), false, false);
+        }});
+    } else if (launcherPartitionIsRemovableInstallData(entry)) {
+        opts.push_back({String(LV_SYMBOL_TRASH "  Delete Data Partition"), [entry]() {
+            launcherDeleteDataPartition(entry);
+        }});
+    }
+
+    String title = String(entry.label[0] ? entry.label : "Partition");
+    launcherUiSelectOption(title.c_str(), opts, metaBuf);
+}
+
+void runCheckForAppUpdates() {
+    launcherUiBeginProgress("Check Updates", "Contacting LauncherHub...", 0, false);
+    String err;
+    bool ok = checkForUpdates(&err);
+    if (!ok) {
+        if (err.indexOf("up to date") >= 0 || err.indexOf("No SD downloads") >= 0) {
+            launcherUiFinish(true, "Up to Date", err.c_str());
+        } else {
+            launcherUiError(err.isEmpty() ? String("Could not check for updates.") : err, "Update Check");
+        }
+        return;
+    }
+
+    // Copy updated items into Explore catalog so the user can tap & install right away.
+    s_exploreItems.clear();
+    JsonArray items = g_launcherHubDoc["items"].as<JsonArray>();
+    if (!items.isNull()) {
+        for (JsonObject obj : items) {
+            ExploreCatalogItem it;
+            it.fid = obj["fid"].as<String>();
+            it.name = obj["name"].as<String>();
+            it.author = obj["author"].as<String>();
+            it.version = obj["version"].as<String>();
+            it.file = obj["file"].as<String>();
+            it.starred = obj["star"].as<bool>();
+            if (!it.fid.isEmpty() && !it.name.isEmpty()) {
+                s_exploreItems.push_back(it);
+            }
+        }
+    }
+    g_launcherHubDoc.clear();
+
+    s_exploreTotal = static_cast<int>(s_exploreItems.size());
+    s_exploreNumPages = 1;
+    s_explorePage = 1;
+    s_exploreLoaded = true;
+    s_exploreLoading = false;
+    s_exploreError = "";
+    s_exploreQuery = "";
+    s_exploreDetail.active = false;
+
+    launcherUiClose();
+    s_activeTab = AppStoreTab::Explore;
+    updateTabBarStyle();
+    renderActiveTab();
+
+    char toastBuf[48];
+    snprintf(toastBuf, sizeof(toastBuf), "Found %d app %s!",
+             s_exploreTotal, (s_exploreTotal == 1) ? "update" : "updates");
+    m3ShowToast(toastBuf, 2200);
+}
+
+void asyncDispatchToolsAction(void* arg) {
+    (void)arg;
+    PendingToolsAction action = s_pendingToolsAction;
+    size_t idx = s_pendingToolsIdx;
+    s_pendingToolsAction = PendingToolsAction::None;
+    s_pendingToolsIdx = 0;
+
+    if (action == PendingToolsAction::None) return;
+
+    switch (action) {
+        case PendingToolsAction::CompactFlash:
+            launcherCompactFlashPartitions();
+            if (s_storeBody) renderActiveTab();
+            break;
+        case PendingToolsAction::DumpTable:
+            launcherDumpPartitionTableToSd();
+            break;
+        case PendingToolsAction::PartitionMenu:
+            if (idx < s_pmanEntries.size()) {
+                LauncherPartitionEntry entry = s_pmanEntries[idx];
+                runPartitionMenu(entry);
+                if (s_storeBody) renderActiveTab();
+            }
+            break;
+        case PendingToolsAction::BackupAllApps: {
+            if (!setupSdCard()) {
+                launcherUiError("Insert a FAT32 SD card to back up App data.", "SD Card Required");
+                break;
+            }
+            int backedUp = 0;
+            for (const ToolsBackupRow& row : s_backupRows) {
+                if (!row.isInstalled || row.dataPartCount == 0) continue;
+                String num;
+                if (ensureBackupConfigForToolsRow(row, num) && backupAllPartitionsForApp(num)) {
+                    backedUp++;
+                }
+            }
+            if (backedUp == 0) {
+                launcherUiInfo("No installed Apps with data partitions found to back up.", "Back Up All");
+            } else {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Backed up data for %d %s.",
+                         backedUp, (backedUp == 1) ? "App" : "Apps");
+                launcherUiFinish(true, "Backups Complete", msg);
+            }
+            if (s_storeBody) renderActiveTab();
+            break;
+        }
+        case PendingToolsAction::BackupApp:
+            if (idx < s_backupRows.size()) {
+                ToolsBackupRow row = s_backupRows[idx];
+                String num;
+                if (!ensureBackupConfigForToolsRow(row, num)) {
+                    launcherUiInfo("No data partitions registered for " + row.appName + ".", "Backup");
+                } else if (!backupAllPartitionsForApp(num)) {
+                    launcherUiError("Could not complete backup for " + row.appName + ".", "Backup Failed");
+                }
+                if (s_storeBody) renderActiveTab();
+            }
+            break;
+        case PendingToolsAction::RestoreApp:
+            if (idx < s_backupRows.size()) {
+                ToolsBackupRow row = s_backupRows[idx];
+                String msg = String("Overwrite ") + row.appName + "'s flash data with its latest SD backup?";
+                if (launcherUiConfirm("Restore Data", msg.c_str(), "Restore", M3Color::PRIMARY)) {
+                    if (!restoreLastBackupForApp(row.appNum)) {
+                        launcherUiError("Could not restore backup for " + row.appName + ".", "Restore Failed");
+                    }
+                }
+                if (s_storeBody) renderActiveTab();
+            }
+            break;
+        case PendingToolsAction::ManageBackupEntry:
+            if (idx < s_backupRows.size()) {
+                ToolsBackupRow row = s_backupRows[idx];
+                std::vector<LauncherUiOption> opts;
+                if (row.isInstalled && row.dataPartCount > 0) {
+                    opts.push_back({String(LV_SYMBOL_SAVE "  Back Up Now"), [row]() {
+                        String num;
+                        if (ensureBackupConfigForToolsRow(row, num)) {
+                            backupAllPartitionsForApp(num);
+                        }
+                    }});
+                }
+                if (row.hasBackup) {
+                    opts.push_back({String(LV_SYMBOL_REFRESH "  Restore Last Backup"), [row]() {
+                        String msg = String("Overwrite ") + row.appName + "'s flash data with its latest SD backup?";
+                        if (launcherUiConfirm("Restore Data", msg.c_str(), "Restore", M3Color::PRIMARY)) {
+                            if (!restoreLastBackupForApp(row.appNum)) {
+                                launcherUiError("Could not restore backup for " + row.appName + ".", "Restore Failed");
+                            }
+                        }
+                    }});
+                }
+                opts.push_back({String(LV_SYMBOL_TRASH "  Remove Backup Record"), [row]() {
+                    String msg = String("Remove ") + row.appName + " from /bkp/backupData.json?";
+                    if (launcherUiConfirm("Remove Record?", msg.c_str(), "Remove", M3Color::CORAL)) {
+                        removeInstalledFromConfig(row.appNum);
+                        m3ShowToast("Backup record removed", 1300);
+                    }
+                }});
+                launcherUiSelectOption(row.appName.c_str(), opts, row.appNum.c_str());
+                if (s_storeBody) renderActiveTab();
+            }
+            break;
+        case PendingToolsAction::CheckUpdates:
+            runCheckForAppUpdates();
+            break;
+        default:
+            break;
+    }
+}
+
+void queueToolsAction(PendingToolsAction action, size_t idx) {
+    s_pendingToolsAction = action;
+    s_pendingToolsIdx = idx;
+    lv_async_call(asyncDispatchToolsAction, nullptr);
+}
+
+void toolsNavSubViewCb(lv_event_t* e) {
+    m3PulseFeedback();
+    int v = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    s_toolsSubView = static_cast<ToolsSubView>(v);
+    renderActiveTab();
+}
+
+void toolsCompactBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::CompactFlash);
+}
+
+void toolsDumpTableBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::DumpTable);
+}
+
+void toolsPartitionRowCb(lv_event_t* e) {
+    m3PulseFeedback();
+    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    queueToolsAction(PendingToolsAction::PartitionMenu, idx);
+}
+
+void toolsBackupAllBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::BackupAllApps);
+}
+
+void toolsBackupRowBtnCb(lv_event_t* e) {
+    m3PulseFeedback();
+    uintptr_t packed = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+    PendingToolsAction action = static_cast<PendingToolsAction>((packed >> 8) & 0xFFu);
+    size_t idx = static_cast<size_t>(packed & 0xFFu);
+    queueToolsAction(action, idx);
+}
+
+void toolsCheckUpdatesBtnCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    queueToolsAction(PendingToolsAction::CheckUpdates);
+}
+
+void toolsRefreshSubViewCb(lv_event_t* e) {
+    (void)e;
+    m3PulseFeedback();
+    renderActiveTab();
+}
+
+lv_obj_t* createToolsMenuRow(lv_obj_t* container, const char* sym, uint32_t badgeBg, uint32_t badgeFg,
+                             const char* title, const char* subtitle, lv_event_cb_t cb, void* userData) {
+    lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(card, 8, 0);
+    lv_obj_set_style_pad_column(card, 8, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, userData);
+
+    lv_obj_t* badge = lv_obj_create(card);
+    lv_obj_set_size(badge, 30, 30);
+    lv_obj_set_style_radius(badge, 9, 0);
+    lv_obj_set_style_bg_color(badge, lv_color_hex(badgeBg), 0);
+    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(badge, 0, 0);
+    lv_obj_set_style_pad_all(badge, 0, 0);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* ico = lv_label_create(badge);
+    lv_label_set_text(ico, sym);
+    lv_obj_set_style_text_color(ico, lv_color_hex(badgeFg), 0);
+    lv_obj_set_style_text_font(ico, &lv_font_montserrat_12, 0);
+    lv_obj_center(ico);
+
+    lv_obj_t* col = lv_obj_create(card);
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(col, 0, 0);
+    lv_obj_set_style_pad_all(col, 0, 0);
+    lv_obj_set_style_pad_row(col, 1, 0);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* tLbl = lv_label_create(col);
+    lv_label_set_text(tLbl, title);
+    lv_obj_set_width(tLbl, LV_PCT(100));
+    lv_label_set_long_mode(tLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(tLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* sLbl = lv_label_create(col);
+    lv_label_set_text(sLbl, subtitle);
+    lv_obj_set_width(sLbl, LV_PCT(100));
+    lv_label_set_long_mode(sLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(sLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(sLbl, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* chev = lv_label_create(card);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_color(chev, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(chev, &lv_font_montserrat_10, 0);
+    return card;
+}
+
+void buildToolsSubHeader(lv_obj_t* container, const char* title) {
+    lv_obj_t* row = lv_obj_create(container);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 6, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* backBtn = m3PillBtn(row, LV_SYMBOL_LEFT " Tools", m3SurfaceHighHex(), m3TextPrimaryHex(), 62, 26);
+    lv_obj_add_event_cb(backBtn, toolsNavSubViewCb, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ToolsSubView::Menu)));
+
+    lv_obj_t* tLbl = lv_label_create(row);
+    lv_label_set_text(tLbl, title);
+    lv_obj_set_flex_grow(tLbl, 1);
+    lv_label_set_long_mode(tLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(tLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(tLbl, &lv_font_montserrat_12, 0);
+
+    lv_obj_t* refBtn = m3PillBtn(row, LV_SYMBOL_REFRESH, m3SurfaceHighHex(), m3TextSecondaryHex(), 26, 26);
+    lv_obj_add_event_cb(refBtn, toolsRefreshSubViewCb, LV_EVENT_CLICKED, nullptr);
+}
+
+void buildToolsMenuView(lv_obj_t* container) {
+    LauncherPartitionTable table;
+    bool hasTable = launcherPartitionReadCurrent(table);
+    AppStoreStorageSummary storage = computeLiveStorageSummary(hasTable ? &table : nullptr, appGetDynamicCount());
+
+    // 1. Visual flash usage summary card
+    lv_obj_t* sumCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(sumCard, 8, 0);
+    lv_obj_set_style_pad_row(sumCard, 5, 0);
+    lv_obj_set_flex_flow(sumCard, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* topRow = lv_obj_create(sumCard);
+    lv_obj_set_size(topRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(topRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(topRow, 0, 0);
+    lv_obj_set_style_pad_all(topRow, 0, 0);
+    lv_obj_set_flex_flow(topRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(topRow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(topRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* fTitle = lv_label_create(topRow);
+    lv_label_set_text(fTitle, "Flash Storage");
+    lv_obj_set_style_text_color(fTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(fTitle, &lv_font_montserrat_12, 0);
+
+    char freeSz[20], usedSz[20];
+    appStoreFormatSizeCompact(storage.freeBytes, freeSz, sizeof(freeSz));
+    appStoreFormatSizeCompact(storage.usedBytes, usedSz, sizeof(usedSz));
+    char statBuf[48];
+    snprintf(statBuf, sizeof(statBuf), "%s used • %s free", usedSz, freeSz);
+
+    lv_obj_t* fStat = lv_label_create(topRow);
+    lv_label_set_text(fStat, statBuf);
+    lv_obj_set_style_text_color(fStat, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(fStat, &lv_font_montserrat_10, 0);
+
+    if (hasTable) {
+        buildFlashMapBar(sumCard, table);
+    }
+
+    // 2. Main Tool cards
+    char pmanSub[52];
+    snprintf(pmanSub, sizeof(pmanSub), "%u partitions • Compact, dump & restore",
+             static_cast<unsigned>(hasTable ? table.entries.size() : 0));
+    createToolsMenuRow(container, LV_SYMBOL_DRIVE, M3Color::PRIMARY_CONT, M3Color::PRIMARY,
+                       "Storage & Partitions", pmanSub,
+                       toolsNavSubViewCb,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(ToolsSubView::StoragePartitions)));
+
+    createToolsMenuRow(container, LV_SYMBOL_SAVE, 0x1E3A2F, M3Color::TERTIARY,
+                       "Backup & Restore", "Back up & restore App data on SD",
+                       toolsNavSubViewCb,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(ToolsSubView::BackupRestore)));
+
+    createToolsMenuRow(container, LV_SYMBOL_DOWNLOAD, 0x3D2E14, M3Color::AMBER,
+                       "Check for App Updates", "Scan SD downloads on LauncherHub",
+                       toolsCheckUpdatesBtnCb, nullptr);
+
+    createToolsMenuRow(container, LV_SYMBOL_REFRESH, m3SurfaceHighestHex(), m3TextPrimaryHex(),
+                       "Sync Home Screen", "Refresh dynamic App tiles on Home",
+                       syncRefreshBtnCb, nullptr);
+
+    // 3. Compact footer note for upcoming Item 11 (WUI & Settings)
+    lv_obj_t* footCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 12);
+    lv_obj_set_style_pad_all(footCard, 7, 0);
+    lv_obj_set_style_pad_row(footCard, 2, 0);
+    lv_obj_set_flex_flow(footCard, LV_FLEX_FLOW_COLUMN);
+
+    char tagBuf[48];
+    snprintf(tagBuf, sizeof(tagBuf), "Device Tag: %s", g_launcherOtaTag.c_str());
+    lv_obj_t* tagLbl = lv_label_create(footCard);
+    lv_label_set_text(tagLbl, tagBuf);
+    lv_obj_set_style_text_color(tagLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(tagLbl, &lv_font_montserrat_10, 0);
+
+    lv_obj_t* nextLbl = lv_label_create(footCard);
+    lv_label_set_text(nextLbl, "Next: Local Web Upload (WUI) & Store Settings");
+    lv_obj_set_style_text_color(nextLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(nextLbl, &lv_font_montserrat_10, 0);
+}
+
+void buildStoragePartitionsView(lv_obj_t* container) {
+    buildToolsSubHeader(container, "Storage & Partitions");
+
+    LauncherPartitionTable table;
+    String readErr;
+    if (!launcherPartitionReadCurrent(table, &readErr)) {
+        lv_obj_t* errCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_t* lbl = lv_label_create(errCard);
+        lv_label_set_text(lbl, ("Could not read partition table:\n" + readErr).c_str());
+        lv_obj_set_width(lbl, LV_PCT(100));
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(M3Color::CORAL), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        return;
+    }
+
+    s_pmanEntries = table.entries;
+    AppStoreStorageSummary storage = computeLiveStorageSummary(&table, launcherPartitionCountOtaApps(table));
+    uint32_t largestFree = 0;
+    bool canCompact = launcherCanCompactPartitions(table, &largestFree);
+
+    // 1. Visual map & compaction card
+    lv_obj_t* mapCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(mapCard, 8, 0);
+    lv_obj_set_style_pad_row(mapCard, 5, 0);
+    lv_obj_set_flex_flow(mapCard, LV_FLEX_FLOW_COLUMN);
+
+    buildFlashMapBar(mapCard, table);
+
+    char totalSz[20], freeSz[20], bigSz[20];
+    appStoreFormatSizeCompact(table.flashSize, totalSz, sizeof(totalSz));
+    appStoreFormatSizeCompact(storage.freeBytes, freeSz, sizeof(freeSz));
+    appStoreFormatSizeCompact(largestFree, bigSz, sizeof(bigSz));
+
+    m3InfoRow(mapCard, "Flash / Free", (String(totalSz) + " / " + freeSz).c_str());
+    m3InfoRow(mapCard, "Largest Free Block", bigSz);
+    m3InfoRow(mapCard, "Layout Status", canCompact ? "Fragmented (compactable)" : "Compact");
+
+    lv_obj_t* actRow = lv_obj_create(mapCard);
+    lv_obj_set_size(actRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(actRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(actRow, 0, 0);
+    lv_obj_set_style_pad_all(actRow, 0, 0);
+    lv_obj_set_style_pad_column(actRow, 6, 0);
+    lv_obj_set_flex_flow(actRow, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(actRow, LV_OBJ_FLAG_SCROLLABLE);
+
+    createCompactChip(actRow, LV_SYMBOL_SHUFFLE " Compact",
+                      canCompact ? M3Color::PRIMARY : m3SurfaceHighestHex(),
+                      canCompact ? M3Color::ON_PRIMARY : m3TextSecondaryHex(),
+                      toolsCompactBtnCb, nullptr);
+    createCompactChip(actRow, LV_SYMBOL_SAVE " Dump Table",
+                      M3Color::PRIMARY_CONT, M3Color::PRIMARY,
+                      toolsDumpTableBtnCb, nullptr);
+
+    // 2. Partition list (map friendly App names for OTA slots)
+    std::vector<LauncherAppMetadata> apps = launcherListInstalledApps();
+    for (size_t i = 0; i < s_pmanEntries.size(); ++i) {
+        const LauncherPartitionEntry& entry = s_pmanEntries[i];
+        uint32_t colHex = appStorePartitionColorHex(entry.type, entry.subtype);
+        const char* tag = appStorePartitionShortTag(entry.type, entry.subtype);
+
+        String displayTitle(entry.label[0] ? entry.label : "unnamed");
+        if (entry.isOtaApp()) {
+            for (const LauncherAppMetadata& app : apps) {
+                if (app.label == entry.label && !app.name.isEmpty() && app.name != app.label) {
+                    displayTitle = app.name + " (" + app.label + ")";
+                    break;
+                }
+            }
+        }
+
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 12);
+        lv_obj_set_style_pad_all(card, 7, 0);
+        lv_obj_set_style_pad_column(card, 7, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, toolsPartitionRowCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+
+        lv_obj_t* badge = lv_obj_create(card);
+        lv_obj_set_size(badge, 32, 24);
+        lv_obj_set_style_radius(badge, 7, 0);
+        lv_obj_set_style_bg_color(badge, lv_color_hex(colHex), 0);
+        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(badge, 0, 0);
+        lv_obj_set_style_pad_all(badge, 0, 0);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* tagLbl = lv_label_create(badge);
+        lv_label_set_text(tagLbl, tag);
+        lv_obj_set_style_text_color(tagLbl, lv_color_hex(0x0E1117), 0);
+        lv_obj_set_style_text_font(tagLbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(tagLbl);
+
+        lv_obj_t* col = lv_obj_create(card);
+        lv_obj_set_height(col, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(col, 0, 0);
+        lv_obj_set_style_pad_all(col, 0, 0);
+        lv_obj_set_style_pad_row(col, 1, 0);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(col, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* nameLbl = lv_label_create(col);
+        lv_label_set_text(nameLbl, displayTitle.c_str());
+        lv_obj_set_width(nameLbl, LV_PCT(100));
+        lv_label_set_long_mode(nameLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(nameLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(nameLbl, &lv_font_montserrat_12, 0);
+
+        char metaBuf[64];
+        appStoreFormatPartitionMeta(entry.offset, entry.size, entry.type, entry.subtype, metaBuf, sizeof(metaBuf));
+        lv_obj_t* metaLbl = lv_label_create(col);
+        lv_label_set_text(metaLbl, metaBuf);
+        lv_obj_set_width(metaLbl, LV_PCT(100));
+        lv_label_set_long_mode(metaLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(metaLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(metaLbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* chev = lv_label_create(card);
+        lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(chev, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(chev, &lv_font_montserrat_10, 0);
+    }
+}
+
+void buildBackupRestoreView(lv_obj_t* container) {
+    buildToolsSubHeader(container, "Backup & Restore");
+
+    if (!isSdCardMounted() && !setupSdCard()) {
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 16);
+        lv_obj_set_style_pad_all(card, 12, 0);
+        lv_obj_set_style_pad_row(card, 8, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* title = lv_label_create(card);
+        lv_label_set_text(title, LV_SYMBOL_SD_CARD "  SD Card Required");
+        lv_obj_set_style_text_color(title, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+
+        lv_obj_t* desc = lv_label_create(card);
+        lv_label_set_text(desc, "Insert a FAT32 microSD card to back up or restore App data partitions (/bkp/).");
+        lv_obj_set_width(desc, LV_PCT(100));
+        lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(desc, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(desc, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* btn = m3PillBtn(card, "Mount SD Card", M3Color::PRIMARY, M3Color::ON_PRIMARY, 136, 30);
+        lv_obj_add_event_cb(btn, checkSdBtnCb, LV_EVENT_CLICKED, nullptr);
+        return;
+    }
+
+    s_backupRows = collectToolsBackupRows();
+    int installableCount = 0;
+    int readyCount = 0;
+    for (const ToolsBackupRow& r : s_backupRows) {
+        if (r.isInstalled && r.dataPartCount > 0) installableCount++;
+        if (r.hasBackup) readyCount++;
+    }
+
+    // Summary & Back Up All card
+    lv_obj_t* sumCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_pad_all(sumCard, 8, 0);
+    lv_obj_set_style_pad_row(sumCard, 6, 0);
+    lv_obj_set_flex_flow(sumCard, LV_FLEX_FLOW_COLUMN);
+
+    char statBuf[56];
+    snprintf(statBuf, sizeof(statBuf), "%d Apps with data • %d saved on SD", installableCount, readyCount);
+    lv_obj_t* sLbl = lv_label_create(sumCard);
+    lv_label_set_text(sLbl, statBuf);
+    lv_obj_set_style_text_color(sLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+    lv_obj_set_style_text_font(sLbl, &lv_font_montserrat_10, 0);
+
+    if (installableCount > 0) {
+        lv_obj_t* allBtn = m3PillBtn(sumCard, LV_SYMBOL_SAVE "  Back Up All Installed Apps",
+                                     M3Color::PRIMARY, M3Color::ON_PRIMARY, LV_PCT(100), 28);
+        lv_obj_add_event_cb(allBtn, toolsBackupAllBtnCb, LV_EVENT_CLICKED, nullptr);
+    }
+
+    if (s_backupRows.empty()) {
+        lv_obj_t* emptyCard = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 14);
+        lv_obj_set_style_pad_all(emptyCard, 12, 0);
+        lv_obj_set_style_pad_row(emptyCard, 6, 0);
+        lv_obj_set_flex_flow(emptyCard, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(emptyCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* eTitle = lv_label_create(emptyCard);
+        lv_label_set_text(eTitle, "No App Data Backups");
+        lv_obj_set_style_text_color(eTitle, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(eTitle, &lv_font_montserrat_12, 0);
+
+        lv_obj_t* eDesc = lv_label_create(emptyCard);
+        lv_label_set_text(eDesc, "Apps with SPIFFS, FAT, or LittleFS data partitions will appear here for one-tap SD backup and restore.");
+        lv_obj_set_width(eDesc, LV_PCT(100));
+        lv_label_set_long_mode(eDesc, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(eDesc, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(eDesc, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(eDesc, &lv_font_montserrat_10, 0);
+        return;
+    }
+
+    for (size_t i = 0; i < s_backupRows.size(); ++i) {
+        const ToolsBackupRow& row = s_backupRows[i];
+
+        lv_obj_t* card = m3Card(container, LV_PCT(100), LV_SIZE_CONTENT, 13);
+        lv_obj_set_style_pad_all(card, 8, 0);
+        lv_obj_set_style_pad_row(card, 5, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+
+        lv_obj_t* head = lv_obj_create(card);
+        lv_obj_set_size(head, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(head, 0, 0);
+        lv_obj_set_style_pad_all(head, 0, 0);
+        lv_obj_set_flex_flow(head, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(head, 1, 0);
+        lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* nLbl = lv_label_create(head);
+        lv_label_set_text(nLbl, row.appName.c_str());
+        lv_obj_set_width(nLbl, LV_PCT(100));
+        lv_label_set_long_mode(nLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(nLbl, lv_color_hex(m3TextPrimaryHex()), 0);
+        lv_obj_set_style_text_font(nLbl, &lv_font_montserrat_12, 0);
+
+        char subBuf[64];
+        if (!row.isInstalled) {
+            snprintf(subBuf, sizeof(subBuf), "Archived • %s",
+                     row.hasBackup ? "Backup on SD" : "No SD files");
+        } else {
+            snprintf(subBuf, sizeof(subBuf), "%u data %s • %s",
+                     static_cast<unsigned>(row.dataPartCount),
+                     (row.dataPartCount == 1) ? "part" : "parts",
+                     row.hasBackup ? "Backup ready" : "No backup yet");
+        }
+        lv_obj_t* subLbl = lv_label_create(head);
+        lv_label_set_text(subLbl, subBuf);
+        lv_obj_set_width(subLbl, LV_PCT(100));
+        lv_label_set_long_mode(subLbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_color(subLbl, lv_color_hex(m3TextSecondaryHex()), 0);
+        lv_obj_set_style_text_font(subLbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* btnRow = lv_obj_create(card);
+        lv_obj_set_size(btnRow, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(btnRow, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(btnRow, 0, 0);
+        lv_obj_set_style_pad_all(btnRow, 0, 0);
+        lv_obj_set_style_pad_column(btnRow, 5, 0);
+        lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
+        lv_obj_clear_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
+
+        if (row.isInstalled && row.dataPartCount > 0) {
+            uintptr_t packed = (static_cast<uintptr_t>(PendingToolsAction::BackupApp) << 8) | (i & 0xFFu);
+            createCompactChip(btnRow, LV_SYMBOL_SAVE " Back Up",
+                              M3Color::PRIMARY_CONT, M3Color::PRIMARY,
+                              toolsBackupRowBtnCb, reinterpret_cast<void*>(packed));
+        }
+        if (row.hasBackup) {
+            uintptr_t packed = (static_cast<uintptr_t>(PendingToolsAction::RestoreApp) << 8) | (i & 0xFFu);
+            createCompactChip(btnRow, LV_SYMBOL_REFRESH " Restore",
+                              0x1E3A2F, M3Color::TERTIARY,
+                              toolsBackupRowBtnCb, reinterpret_cast<void*>(packed));
+        }
+        uintptr_t packedMgr = (static_cast<uintptr_t>(PendingToolsAction::ManageBackupEntry) << 8) | (i & 0xFFu);
+        createCompactChip(btnRow, "More",
+                          m3SurfaceHighestHex(), m3TextSecondaryHex(),
+                          toolsBackupRowBtnCb, reinterpret_cast<void*>(packedMgr));
+    }
+}
+
+void buildToolsTab(lv_obj_t* container) {
+    switch (s_toolsSubView) {
+        case ToolsSubView::StoragePartitions:
+            buildStoragePartitionsView(container);
+            break;
+        case ToolsSubView::BackupRestore:
+            buildBackupRestoreView(container);
+            break;
+        case ToolsSubView::Menu:
+        default:
+            buildToolsMenuView(container);
+            break;
+    }
 }
 
 void updateTabBarStyle() {
@@ -2394,7 +3407,7 @@ void renderActiveTab() {
             buildInstalledTab(s_tabContent);
             break;
         case AppStoreTab::Tools:
-            buildToolsPlaceholderTab(s_tabContent);
+            buildToolsTab(s_tabContent);
             break;
         default:
             buildInstalledTab(s_tabContent);

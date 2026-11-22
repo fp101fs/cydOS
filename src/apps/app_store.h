@@ -53,6 +53,19 @@ std::string appStoreParentPath(const char* path);
 void appStoreFormatSdPathDisplay(const char* path, char* out, size_t outSize);
 bool appStoreIsValidSdName(const char* name);
 
+// Pure Storage & Partitions (PMan) helpers (host-testable)
+const char* appStorePartitionKindLabel(uint8_t type, uint8_t subtype);
+const char* appStorePartitionShortTag(uint8_t type, uint8_t subtype);
+uint32_t appStorePartitionColorHex(uint8_t type, uint8_t subtype);
+bool appStoreIsProtectedPartition(uint8_t type, uint8_t subtype);
+void appStoreFormatPartitionMeta(uint32_t offset,
+                                 uint32_t sizeBytes,
+                                 uint8_t type,
+                                 uint8_t subtype,
+                                 char* out,
+                                 size_t outSize);
+uint8_t appStoreComputeSegmentWidthPct(uint32_t segmentBytes, uint32_t totalBytes);
+
 AppStoreStorageSummary appStoreComputeStorageSummary(uint32_t dynamicTotalBytes,
                                                      uint32_t freeBytes,
                                                      uint8_t installedCount);

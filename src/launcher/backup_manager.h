@@ -28,6 +28,7 @@ bool updateInstalledAppName(const String &appNum, const String &newName);
 bool updateInstalledBackupPath(const String &appNum, const String &label, const String &backupPath);
 bool removeInstalledFromConfig(const String &appNum);
 BackupInstallInfo loadInstalledFromConfig(const String &appNum);
+std::vector<BackupInstallInfo> listAllBackupEntries();
 
 // Search helpers
 String findAppNumByFilepath(const String &sdFilepath);
