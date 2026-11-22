@@ -1,92 +1,206 @@
 #include "idf_http_client.h"
 
-#include "ca_certs.h"
-#include "esp_http_client.h"
 #include "launcher_platform.h"
+#include <Arduino.h>
+#include <HTTPClient.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <cstdlib>
 #include <cstring>
-#include <strings.h>
 
 namespace {
-constexpr int kTimeoutMs = 15000;
-constexpr int kHttpRxBufferSize = 4096;
-constexpr int kHttpTxBufferSize = 2048;
+constexpr uint32_t kTimeoutMs = 15000;
+constexpr uint32_t kStreamIdleTimeoutMs = 15000;
+constexpr size_t kStreamChunkSize = 1024;
 constexpr int kMaxRedirects = 5;
 
-struct HttpRequestContext {
-    LauncherHttpResponse *response;
-    LauncherHttpChunkCb cb;
-    void *ctx;
-    bool callbackOk;
-};
-
-esp_err_t httpEventHandler(esp_http_client_event_t *evt) {
-    if (!evt || !evt->user_data) return ESP_OK;
-
-    HttpRequestContext *request = static_cast<HttpRequestContext *>(evt->user_data);
-    LauncherHttpResponse *response = request->response;
-    if (evt->event_id == HTTP_EVENT_ON_HEADER && response) {
-        int status = evt->client ? esp_http_client_get_status_code(evt->client) : 0;
-        if (status >= 300 && status < 400) return ESP_OK;
-        if (evt->header_key && evt->header_value && strcasecmp(evt->header_key, "Content-Length") == 0) {
-            response->content_length = atoll(evt->header_value);
-        } else if (
-            evt->header_key && evt->header_value && strcasecmp(evt->header_key, "Content-Range") == 0
-        ) {
-            strncpy(response->content_range, evt->header_value, sizeof(response->content_range) - 1);
-            response->content_range[sizeof(response->content_range) - 1] = '\0';
-        }
-    } else if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data && evt->data_len > 0) {
-        int status = evt->client ? esp_http_client_get_status_code(evt->client) : 0;
-        if (status >= 300 && status < 400) { return ESP_OK; }
-        if (status > 0 && (status < 200 || status >= 300)) {
-            request->callbackOk = false;
-            return ESP_FAIL;
-        }
-        if (request->cb &&
-            !request->cb(static_cast<const uint8_t *>(evt->data), evt->data_len, request->ctx)) {
-            request->callbackOk = false;
-            return ESP_FAIL;
-        }
-    }
-    return ESP_OK;
+bool isHttpsUrl(const String &url) {
+    return url.startsWith("https://") || url.startsWith("HTTPS://");
 }
 
-bool executeGet(
-    const char *url, LauncherHttpChunkCb cb, void *ctx, LauncherHttpResponse *response, const char *headerKey,
-    const char *headerValue, const char *header2Key = nullptr, const char *header2Value = nullptr
+String resolveRedirectUrl(const String &currentUrl, const String &location) {
+    if (location.startsWith("http://") || location.startsWith("https://")) {
+        return location;
+    }
+    int schemeEnd = currentUrl.indexOf("://");
+    if (schemeEnd < 0) return location;
+    int hostStart = schemeEnd + 3;
+    int pathStart = currentUrl.indexOf('/', hostStart);
+    String origin = (pathStart >= 0) ? currentUrl.substring(0, pathStart) : currentUrl;
+    if (location.startsWith("/")) {
+        return origin + location;
+    }
+    int lastSlash = currentUrl.lastIndexOf('/');
+    if (lastSlash > hostStart) {
+        return currentUrl.substring(0, lastSlash + 1) + location;
+    }
+    return origin + "/" + location;
+}
+
+bool streamBody(HTTPClient &http, int64_t contentLength, LauncherHttpChunkCb cb, void *ctx) {
+    WiFiClient *stream = http.getStreamPtr();
+    if (!stream) return contentLength == 0;
+
+    uint8_t buf[kStreamChunkSize];
+    int64_t remaining = contentLength;
+    uint32_t lastDataMs = millis();
+
+    while (remaining != 0) {
+        int avail = stream->available();
+        if (avail > 0) {
+            size_t toRead = static_cast<size_t>(avail);
+            if (toRead > sizeof(buf)) toRead = sizeof(buf);
+            if (remaining > 0 && static_cast<int64_t>(toRead) > remaining) {
+                toRead = static_cast<size_t>(remaining);
+            }
+            int n = stream->readBytes(buf, toRead);
+            if (n > 0) {
+                lastDataMs = millis();
+                if (cb && !cb(buf, static_cast<size_t>(n), ctx)) {
+                    return false;
+                }
+                if (remaining > 0) remaining -= n;
+                continue;
+            }
+        }
+
+        if (!stream->connected()) {
+            // Drain any remaining buffered bytes after peer close
+            if (stream->available() > 0) continue;
+            break;
+        }
+
+        if (static_cast<uint32_t>(millis() - lastDataMs) > kStreamIdleTimeoutMs) {
+            launcherConsolePrintf("[HTTP] Stream idle timeout\n");
+            return false;
+        }
+        delay(2);
+    }
+
+    return (remaining <= 0);
+}
+
+bool executeRequest(
+    const char *url,
+    bool isPost,
+    const char *postBody,
+    size_t postBodyLen,
+    LauncherHttpChunkCb cb,
+    void *ctx,
+    LauncherHttpResponse *response,
+    const char *headerKey = nullptr,
+    const char *headerValue = nullptr,
+    const char *header2Key = nullptr,
+    const char *header2Value = nullptr
 ) {
     LauncherHttpResponse localResponse;
     LauncherHttpResponse *resp = response ? response : &localResponse;
     *resp = LauncherHttpResponse();
-    HttpRequestContext request = {resp, cb, ctx, true};
 
-    esp_http_client_config_t config = {};
-    config.url = url;
-    config.method = HTTP_METHOD_GET;
-    config.timeout_ms = kTimeoutMs;
-    config.buffer_size = kHttpRxBufferSize;
-    config.buffer_size_tx = kHttpTxBufferSize;
-    config.max_redirection_count = kMaxRedirects;
-    config.event_handler = httpEventHandler;
-    config.user_data = &request;
-    config.cert_pem = kRootCAs;
+    if (!url || !url[0]) {
+        resp->transport_error = -1;
+        return false;
+    }
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return false;
+    String currentUrl(url);
+    static const char *kCollectHeaders[] = {"Content-Range", "Content-Length", "Location"};
 
-    esp_http_client_set_header(client, "Accept-Encoding", "identity");
-    if (headerKey && headerValue) esp_http_client_set_header(client, headerKey, headerValue);
-    if (header2Key && header2Value) esp_http_client_set_header(client, header2Key, header2Value);
+    for (int hop = 0; hop <= kMaxRedirects; ++hop) {
+        HTTPClient http;
+        http.setReuse(false);
+        http.setConnectTimeout(kTimeoutMs);
+        http.setTimeout(kTimeoutMs);
+        http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+        http.collectHeaders(kCollectHeaders, 3);
 
-    esp_err_t err = esp_http_client_perform(client);
-    int64_t contentLength = esp_http_client_get_content_length(client);
-    if (contentLength >= 0) resp->content_length = contentLength;
-    resp->status = esp_http_client_get_status_code(client);
-    resp->transport_error = static_cast<int>(err);
+        WiFiClient plainClient;
+        WiFiClientSecure secureClient;
+        bool began = false;
+        if (isHttpsUrl(currentUrl)) {
+            // Skip CA bundle parsing to preserve internal DRAM for TLS handshake (~15 KB saved)
+            // and avoid root/intermediate CA rotation failures.
+            secureClient.setInsecure();
+            secureClient.setTimeout(kTimeoutMs / 1000);
+            began = http.begin(secureClient, currentUrl);
+        } else {
+            plainClient.setTimeout(kTimeoutMs / 1000);
+            began = http.begin(plainClient, currentUrl);
+        }
 
-    esp_http_client_cleanup(client);
-    return err == ESP_OK && request.callbackOk && resp->status >= 200 && resp->status < 300;
+        if (!began) {
+            resp->transport_error = -2;
+            launcherConsolePrintf("[HTTP] begin() failed for %s (freeHeap=%lu)\n",
+                                  currentUrl.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()));
+            return false;
+        }
+
+        http.addHeader("Accept-Encoding", "identity");
+        http.addHeader("User-Agent", "Pixel-CYD-Store/1.1");
+        if (isPost) {
+            http.addHeader("Content-Type", "application/json");
+        }
+        if (headerKey && headerValue) http.addHeader(headerKey, headerValue);
+        if (header2Key && header2Value) http.addHeader(header2Key, header2Value);
+
+        int code = isPost
+                       ? http.POST(reinterpret_cast<uint8_t *>(const_cast<char *>(postBody)), postBodyLen)
+                       : http.GET();
+
+        if (code <= 0) {
+            resp->status = 0;
+            resp->transport_error = code;
+            launcherConsolePrintf("[HTTP] %s failed: err=%d (%s) freeHeap=%lu\n",
+                                  currentUrl.c_str(), code, HTTPClient::errorToString(code).c_str(),
+                                  static_cast<unsigned long>(ESP.getFreeHeap()));
+            http.end();
+            return false;
+        }
+
+        // Handle HTTP redirects manually to preserve Range/HWID headers across hops & schemes.
+        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+            String loc = http.header("Location");
+            http.end();
+            if (loc.isEmpty() || hop >= kMaxRedirects) {
+                resp->status = code;
+                return false;
+            }
+            if (code == 303) {
+                isPost = false;
+                postBody = nullptr;
+                postBodyLen = 0;
+            }
+            currentUrl = resolveRedirectUrl(currentUrl, loc);
+            continue;
+        }
+
+        resp->status = code;
+        resp->transport_error = 0;
+
+        int len = http.getSize();
+        if (len >= 0) {
+            resp->content_length = len;
+        } else {
+            String clHdr = http.header("Content-Length");
+            if (!clHdr.isEmpty()) resp->content_length = atoll(clHdr.c_str());
+        }
+
+        String crHdr = http.header("Content-Range");
+        if (!crHdr.isEmpty()) {
+            strncpy(resp->content_range, crHdr.c_str(), sizeof(resp->content_range) - 1);
+            resp->content_range[sizeof(resp->content_range) - 1] = '\0';
+        }
+
+        if (code < 200 || code >= 300) {
+            http.end();
+            return false;
+        }
+
+        bool ok = streamBody(http, resp->content_length, cb, ctx);
+        http.end();
+        return ok;
+    }
+
+    return false;
 }
 
 struct StringSink {
@@ -115,7 +229,7 @@ bool launcherHttpGetStream(
     const char *url, LauncherHttpChunkCb cb, void *ctx, LauncherHttpResponse *response, const char *headerKey,
     const char *headerValue
 ) {
-    return executeGet(url, cb, ctx, response, headerKey, headerValue);
+    return executeRequest(url, false, nullptr, 0, cb, ctx, response, headerKey, headerValue);
 }
 
 bool launcherHttpGetRange(
@@ -125,7 +239,7 @@ bool launcherHttpGetRange(
     if (size == 0) return false;
     String range = "bytes=" + String(offset) + "-" + String(offset + size - 1);
     const char *effectiveHwid = (hwid && hwid[0]) ? hwid : "aa:11:bb:22:cc:44";
-    return executeGet(url, cb, ctx, response, "Range", range.c_str(), "HWID", effectiveHwid);
+    return executeRequest(url, false, nullptr, 0, cb, ctx, response, "Range", range.c_str(), "HWID", effectiveHwid);
 }
 
 bool launcherHttpPost(
@@ -136,33 +250,5 @@ bool launcherHttpPost(
     StringSink sink = {&out, maxSize};
     LauncherHttpResponse localResponse;
     LauncherHttpResponse *resp = response ? response : &localResponse;
-    *resp = LauncherHttpResponse();
-    HttpRequestContext request = {resp, stringChunkCb, &sink, true};
-
-    esp_http_client_config_t config = {};
-    config.url = url;
-    config.method = HTTP_METHOD_POST;
-    config.timeout_ms = kTimeoutMs;
-    config.buffer_size = kHttpRxBufferSize;
-    config.buffer_size_tx = kHttpTxBufferSize;
-    config.max_redirection_count = kMaxRedirects;
-    config.event_handler = httpEventHandler;
-    config.user_data = &request;
-    config.cert_pem = kRootCAs;
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return false;
-
-    esp_http_client_set_header(client, "Accept-Encoding", "identity");
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, body, static_cast<int>(bodyLen));
-
-    esp_err_t err = esp_http_client_perform(client);
-    int64_t contentLength = esp_http_client_get_content_length(client);
-    if (contentLength >= 0) resp->content_length = contentLength;
-    resp->status = esp_http_client_get_status_code(client);
-    resp->transport_error = static_cast<int>(err);
-
-    esp_http_client_cleanup(client);
-    return err == ESP_OK && request.callbackOk && resp->status >= 200 && resp->status < 300;
+    return executeRequest(url, true, body, bodyLen, stringChunkCb, &sink, resp);
 }
