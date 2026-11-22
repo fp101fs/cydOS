@@ -9,6 +9,7 @@
 #include "launcher_ui_bridge.h"
 #include "nvs_helpers.h"
 #include "../apps/app_registry.h"
+#include "../apps/app_store.h"
 #include "../components/m3_keyboard.h"
 #include "../components/m3_modal.h"
 #include "../components/m3_widgets.h"
@@ -238,7 +239,7 @@ void asyncShowActionsCb(void* arg) {
         launcherDeleteAppByLabel(label.c_str(), false, false);
     }});
     opts.push_back({String(LV_SYMBOL_DOWNLOAD "  Open in App Store"), []() {
-        appManagerLaunchById("app_store");
+        appStoreOpenTab(AppStoreTab::Installed);
     }});
 
     launcherUiSelectOption(name.c_str(), opts, subtitle.c_str());
@@ -308,6 +309,7 @@ void launcherHomeSyncRefresh(bool rebuildHome, bool goFirstPage) {
 
 void launcherHomeSyncOnAppsChanged(const char* changedLabel) {
     syncRegistryFromInstalled(changedLabel, true, false);
+    appStoreNotifyAppsChanged();
 }
 
 void launcherHomeLaunchApp(const char* label) {
