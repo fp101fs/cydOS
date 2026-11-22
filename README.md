@@ -50,10 +50,10 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
 - **`factory`** (`0x010000`, 2.00 MB): Pixel CYD + App Store firmware.
 - **Dynamic App Pool** (`0x210000..0x400000`, **1.94 MB / 1,984 KB**): Managed dynamically at runtime for installed Apps and their SPIFFS/FAT/LittleFS data partitions.
 
-| Target | RAM (Static) | `firmware.bin` (2.00 MB `factory` slot) | Slot Headroom | Dynamic App Pool |
-| --- | --- | --- | --- | --- |
-| `cyd2usb` (ST7789) | 31.9% (`104.4 KB / 320 KB`) | 99.1% (`2,078,096 B / 2,097,152 B`) | `18.6 KB` | `1.94 MB` (`0x1F0000`) |
-| `cyd` (ILI9341) | 31.9% (`104.4 KB / 320 KB`) | 99.1% (`2,078,816 B / 2,097,152 B`) | `17.9 KB` | `1.94 MB` (`0x1F0000`) |
+| Target | RAM (Static) | Runtime Free Heap (Boot) | `firmware.bin` (2.00 MB `factory` slot) | Slot Headroom | Dynamic App Pool |
+| --- | --- | --- | --- | --- | --- |
+| `cyd2usb` (ST7789) | 31.9% (`104.4 KB / 320 KB`) | `~44.7 KB` (Wi-Fi + 21 apps) | 99.1% (`2,078,096 B / 2,097,152 B`) | `18.6 KB` | `1.94 MB` (`0x1F0000`) |
+| `cyd` (ILI9341) | 31.9% (`104.4 KB / 320 KB`) | — | 99.1% (`2,078,816 B / 2,097,152 B`) | `17.9 KB` | `1.94 MB` (`0x1F0000`) |
 
 ## Build, Verify & Flash
 ```bash
