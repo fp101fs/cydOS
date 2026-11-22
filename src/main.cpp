@@ -22,6 +22,7 @@
 #include "launcher/launcher_ui_bridge.h"
 #include "launcher/backup_manager.h"
 #include "launcher/onlineLauncher.h"
+#include "launcher/launcher_home_sync.h"
 
 static bool s_bootWasDown = false;
 
@@ -50,6 +51,7 @@ void setup() {
     launcherUiLoadState();
     launcherBackupInit();
     launcherOnlineInit();
+    launcherHomeSyncInit();
     companionMgrInit();
     screenMirrorInit();
     homeScreenInit();

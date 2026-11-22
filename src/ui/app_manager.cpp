@@ -43,7 +43,11 @@ void appManagerInit() {
 void appManagerLaunch(const AppMeta* meta) {
     if (!meta) return;
     if (!meta->buildFn) {
-        if (meta->actionFn) meta->actionFn();
+        if (meta->actionFn) {
+            meta->actionFn();
+        } else if (appIsDynamic(meta) && appGetDynamicLaunchHandler()) {
+            appGetDynamicLaunchHandler()(meta);
+        }
         return;
     }
 

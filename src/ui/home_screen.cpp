@@ -5,6 +5,7 @@
 #include "../drivers/display_drv.h"
 #include "../drivers/time_mgr.h"
 #include "../components/m3_widgets.h"
+#include "../launcher/launcher_home_sync.h"
 #include <stdio.h>
 
 static constexpr uint8_t APPS_PER_PAGE = 8;
@@ -25,6 +26,7 @@ static lv_obj_t* s_home = nullptr;
 static lv_obj_t* s_orb1 = nullptr;
 static lv_obj_t* s_orb2 = nullptr;
 static lv_obj_t* s_pager = nullptr;
+static lv_obj_t* s_dotRow = nullptr;
 static lv_obj_t* s_dots[MAX_PAGES] = {};
 static uint8_t s_pageCount = 1;
 static uint8_t s_currentPage = 0;
@@ -41,6 +43,10 @@ static void appIconClickCb(lv_event_t* e) {
     const AppMeta* meta = (const AppMeta*)lv_event_get_user_data(e);
     if (!meta) return;
     m3PulseFeedback();
+    if (appIsDynamic(meta)) {
+        launcherHomeLaunchApp(meta->launcherLabel);
+        return;
+    }
     appManagerLaunch(meta);
 }
 
@@ -48,6 +54,10 @@ static void appIconLongPressCb(lv_event_t* e) {
     const AppMeta* meta = (const AppMeta*)lv_event_get_user_data(e);
     if (!meta) return;
     m3PulseFeedback();
+    if (appIsDynamic(meta)) {
+        launcherHomeShowAppActions(meta->launcherLabel, meta->name);
+        return;
+    }
     char msg[48];
     snprintf(msg, sizeof(msg), "%s  •  Tap to open", meta->name);
     m3ShowToast(msg, 1300);
@@ -133,10 +143,25 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
         lv_obj_set_style_text_color(ico, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(ico, &lv_font_montserrat_20, 0);
         lv_obj_center(ico);
+
+        if (appIsDynamic(meta)) {
+            lv_obj_t* badge = lv_obj_create(icoBox);
+            lv_obj_set_size(badge, 8, 8);
+            lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, 2, -2);
+            lv_obj_set_style_bg_color(badge, lv_color_hex(meta->accentHex), 0);
+            lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(badge, 1, 0);
+            lv_obj_set_style_border_color(badge, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_radius(badge, M3Dim::RADIUS_PILL, 0);
+            lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        }
     }
 
     lv_obj_t* lbl = lv_label_create(wrap);
     lv_label_set_text(lbl, meta->name);
+    lv_obj_set_width(lbl, TILE_W);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(lbl, lv_color_hex(m3TextPrimaryHex()), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
     lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, 0, -1);
@@ -146,6 +171,56 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
     }
 
     return wrap;
+}
+
+static void buildAppGrid(bool goFirstPage) {
+    if (!s_pager || !s_dotRow) return;
+
+    uint16_t w = displayWidth();
+    uint8_t prevPage = goFirstPage ? 0 : s_currentPage;
+
+    lv_obj_clean(s_pager);
+    lv_obj_clean(s_dotRow);
+    s_tileCount = 0;
+    for (uint8_t i = 0; i < APP_MAX_COUNT; ++i) s_tileLabels[i] = nullptr;
+    for (uint8_t i = 0; i < MAX_PAGES; ++i) s_dots[i] = nullptr;
+
+    uint8_t totalApps = appGetCount();
+    s_pageCount = (totalApps == 0) ? 1 : (uint8_t)((totalApps + APPS_PER_PAGE - 1) / APPS_PER_PAGE);
+    if (s_pageCount > MAX_PAGES) s_pageCount = MAX_PAGES;
+
+    int16_t gridW = 3 * TILE_STEP_X + TILE_W;
+    int16_t tileStartX = (int16_t)(((int16_t)w - gridW) / 2);
+
+    for (uint8_t p = 0; p < s_pageCount; ++p) {
+        lv_obj_t* pageObj = lv_obj_create(s_pager);
+        lv_obj_set_size(pageObj, w, PAGER_H);
+        lv_obj_set_pos(pageObj, (lv_coord_t)(p * w), 0);
+        lv_obj_set_style_bg_opa(pageObj, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(pageObj, 0, 0);
+        lv_obj_set_style_pad_all(pageObj, 0, 0);
+        lv_obj_clear_flag(pageObj, LV_OBJ_FLAG_SCROLLABLE);
+
+        uint8_t startIdx = p * APPS_PER_PAGE;
+        for (uint8_t i = 0; i < APPS_PER_PAGE && (startIdx + i) < totalApps; ++i) {
+            const AppMeta* meta = appGetAt(startIdx + i);
+            int col = i % 4;
+            int row = i / 4;
+            createAppTile(pageObj, meta, (int16_t)(tileStartX + col * TILE_STEP_X),
+                          (int16_t)(TILE_START_Y + row * TILE_STEP_Y));
+        }
+    }
+
+    for (uint8_t i = 0; i < s_pageCount; ++i) {
+        s_dots[i] = lv_obj_create(s_dotRow);
+        lv_obj_set_style_border_width(s_dots[i], 0, 0);
+        lv_obj_set_style_radius(s_dots[i], M3Dim::RADIUS_PILL, 0);
+        lv_obj_clear_flag(s_dots[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    if (prevPage >= s_pageCount) prevPage = s_pageCount - 1;
+    lv_obj_scroll_to_x(s_pager, (lv_coord_t)(prevPage * w), LV_ANIM_OFF);
+    updatePageDots(prevPage);
 }
 
 void homeScreenInit() {
@@ -243,52 +318,19 @@ void homeScreenInit() {
     lv_obj_set_scroll_dir(s_pager, LV_DIR_HOR);
     lv_obj_add_event_cb(s_pager, pagerScrollEndCb, LV_EVENT_SCROLL_END, nullptr);
 
-    uint8_t totalApps = appGetCount();
-    s_pageCount = (totalApps == 0) ? 1 : (uint8_t)((totalApps + APPS_PER_PAGE - 1) / APPS_PER_PAGE);
-    if (s_pageCount > MAX_PAGES) s_pageCount = MAX_PAGES;
-
-    int16_t gridW = 3 * TILE_STEP_X + TILE_W;
-    int16_t tileStartX = (int16_t)(((int16_t)w - gridW) / 2);
-
-    for (uint8_t p = 0; p < s_pageCount; ++p) {
-        lv_obj_t* pageObj = lv_obj_create(s_pager);
-        lv_obj_set_size(pageObj, w, PAGER_H);
-        lv_obj_set_pos(pageObj, (lv_coord_t)(p * w), 0);
-        lv_obj_set_style_bg_opa(pageObj, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(pageObj, 0, 0);
-        lv_obj_set_style_pad_all(pageObj, 0, 0);
-        lv_obj_clear_flag(pageObj, LV_OBJ_FLAG_SCROLLABLE);
-
-        uint8_t startIdx = p * APPS_PER_PAGE;
-        for (uint8_t i = 0; i < APPS_PER_PAGE && (startIdx + i) < totalApps; ++i) {
-            const AppMeta* meta = appGetAt(startIdx + i);
-            int col = i % 4;
-            int row = i / 4;
-            createAppTile(pageObj, meta, (int16_t)(tileStartX + col * TILE_STEP_X),
-                          (int16_t)(TILE_START_Y + row * TILE_STEP_Y));
-        }
-    }
-
     // 3. Page Indicator Dots (y = 212)
-    lv_obj_t* dotRow = lv_obj_create(s_home);
-    lv_obj_set_size(dotRow, w, 10);
-    lv_obj_set_pos(dotRow, 0, 212);
-    lv_obj_set_style_bg_opa(dotRow, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(dotRow, 0, 0);
-    lv_obj_set_style_pad_all(dotRow, 0, 0);
-    lv_obj_set_flex_flow(dotRow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(dotRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(dotRow, 6, 0);
-    lv_obj_clear_flag(dotRow, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    s_dotRow = lv_obj_create(s_home);
+    lv_obj_set_size(s_dotRow, w, 10);
+    lv_obj_set_pos(s_dotRow, 0, 212);
+    lv_obj_set_style_bg_opa(s_dotRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_dotRow, 0, 0);
+    lv_obj_set_style_pad_all(s_dotRow, 0, 0);
+    lv_obj_set_flex_flow(s_dotRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_dotRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_dotRow, 6, 0);
+    lv_obj_clear_flag(s_dotRow, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    for (uint8_t i = 0; i < MAX_PAGES; ++i) s_dots[i] = nullptr;
-    for (uint8_t i = 0; i < s_pageCount; ++i) {
-        s_dots[i] = lv_obj_create(dotRow);
-        lv_obj_set_style_border_width(s_dots[i], 0, 0);
-        lv_obj_set_style_radius(s_dots[i], M3Dim::RADIUS_PILL, 0);
-        lv_obj_clear_flag(s_dots[i], LV_OBJ_FLAG_CLICKABLE);
-    }
-    updatePageDots(0);
+    buildAppGrid(true);
 
     // 4. Pixel Google Search Pill (y = 226..258, cleanly above 54px bottom bar at y=266)
     s_searchBar = lv_obj_create(s_home);
@@ -363,4 +405,9 @@ void homeScreenGoPage(uint8_t page) {
     lv_coord_t targetX = (lv_coord_t)(page * displayWidth());
     lv_obj_scroll_to_x(s_pager, targetX, LV_ANIM_ON);
     updatePageDots(page);
+}
+
+void homeScreenRebuildGrid(bool goFirstPage) {
+    if (!s_home || !s_pager || !s_dotRow) return;
+    buildAppGrid(goFirstPage);
 }
