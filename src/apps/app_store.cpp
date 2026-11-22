@@ -1242,6 +1242,13 @@ void fetchExploreCatalogNow() {
 
     s_exploreLoading = true;
     s_exploreError = "";
+    // Free cached tab vectors & old catalog before TLS handshake to maximize contiguous heap.
+    std::vector<ExploreCatalogItem>().swap(s_exploreItems);
+    std::vector<InstalledRowData>().swap(s_installedRows);
+    std::vector<LauncherSdEntry>().swap(s_sdEntries);
+    std::vector<LauncherPartitionEntry>().swap(s_pmanEntries);
+    std::vector<ToolsBackupRow>().swap(s_backupRows);
+    g_launcherHubDoc.clear();
 
     String stepMsg = s_exploreQuery.isEmpty()
                          ? (String("Loading ") + appStoreSortLabel(s_exploreSort) + " Apps...")

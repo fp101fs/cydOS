@@ -5,8 +5,8 @@
 
 TFT_eSPI tft;
 
-// 12-line draw buffer in internal DRAM: 240 * 12 * 2 = 5,760 bytes
-static constexpr uint16_t DRAW_BUF_LINES = 12;
+// 8-line draw buffer in internal DRAM: 240 * 8 * 2 = 3,840 bytes
+static constexpr uint16_t DRAW_BUF_LINES = 8;
 static lv_disp_draw_buf_t s_draw_buf;
 static lv_color_t s_buf1[DEFAULT_SCREEN_W * DRAW_BUF_LINES];
 static lv_disp_drv_t s_disp_drv;

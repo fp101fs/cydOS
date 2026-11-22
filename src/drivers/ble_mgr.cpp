@@ -19,13 +19,23 @@ static portMUX_TYPE s_bleMux = portMUX_INITIALIZER_UNLOCKED;
 #define BLE_UNLOCK() do {} while (0)
 #endif
 
-static BleScanEntry s_scanList[BLE_MAX_SCAN_RESULTS];
-static size_t       s_scanCount = 0;
-static uint32_t     s_scanGen = 0;
+static BleScanEntry* s_scanList = nullptr;
+static size_t        s_scanCount = 0;
+static uint32_t      s_scanGen = 0;
 
-static BleScanEntry s_pendingList[BLE_MAX_SCAN_RESULTS];
-static size_t       s_pendingCount = 0;
+static BleScanEntry* s_pendingList = nullptr;
+static size_t        s_pendingCount = 0;
 static volatile bool s_pendingReady = false;
+
+static bool ensureBleScanBufs() {
+    if (!s_scanList) {
+        s_scanList = (BleScanEntry*)calloc(BLE_MAX_SCAN_RESULTS, sizeof(BleScanEntry));
+    }
+    if (!s_pendingList) {
+        s_pendingList = (BleScanEntry*)calloc(BLE_MAX_SCAN_RESULTS, sizeof(BleScanEntry));
+    }
+    return s_scanList && s_pendingList;
+}
 
 static bool         s_initialized = false;
 static bool         s_scanning = false;
@@ -193,15 +203,18 @@ static void bleScanCompleteCb(NimBLEScanResults results) {
     size_t sortedCount = bleMgrMergeAndSortResults(raw, rawCount, sorted, BLE_MAX_SCAN_RESULTS);
 
     BLE_LOCK();
-    for (size_t i = 0; i < sortedCount; ++i) {
-        s_pendingList[i] = sorted[i];
+    if (s_pendingList) {
+        for (size_t i = 0; i < sortedCount; ++i) {
+            s_pendingList[i] = sorted[i];
+        }
+        s_pendingCount = sortedCount;
+        s_pendingReady = true;
     }
-    s_pendingCount = sortedCount;
-    s_pendingReady = true;
     BLE_UNLOCK();
 }
 
 static bool ensureNimBleInit() {
+    if (!ensureBleScanBufs()) return false;
     if (s_initialized && NimBLEDevice::getInitialized()) {
         return true;
     }
@@ -388,7 +401,7 @@ bool bleMgrTick() {
     size_t stagingCount = 0;
 
     BLE_LOCK();
-    if (s_pendingReady) {
+    if (s_pendingReady && s_pendingList) {
         ready = true;
         stagingCount = s_pendingCount;
         for (size_t i = 0; i < stagingCount; ++i) {
@@ -398,7 +411,7 @@ bool bleMgrTick() {
     }
     BLE_UNLOCK();
 
-    if (ready) {
+    if (ready && s_scanList) {
         for (size_t i = 0; i < stagingCount; ++i) {
             s_scanList[i] = staging[i];
         }
@@ -443,7 +456,7 @@ size_t bleMgrGetScanCount() {
 }
 
 const BleScanEntry* bleMgrGetScanResult(size_t index) {
-    if (index >= s_scanCount) return nullptr;
+    if (!s_scanList || index >= s_scanCount) return nullptr;
     return &s_scanList[index];
 }
 

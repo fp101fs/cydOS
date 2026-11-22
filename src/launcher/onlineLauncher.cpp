@@ -261,7 +261,7 @@ bool flashRawRangeFromHttp(
 }
 
 bool getInfo(
-    const String &serverUrl, JsonDocument &outDoc, JsonDocument *filter = nullptr, int *outStatus = nullptr,
+    const String &serverUrl, JsonDocument &outDoc, bool useListFilter = false, int *outStatus = nullptr,
     String *errorOut = nullptr
 ) {
     if (!launcherIsWifiConnected()) {
@@ -277,9 +277,14 @@ bool getInfo(
         if (launcherHttpGetToString(serverUrl.c_str(), payload, 65536, &resp)) {
             launcherConsolePrintf("getInfo: GET ok status=%d bytes=%u\n", resp.status, payload.length());
             outDoc.clear();
-            DeserializationError error =
-                filter ? deserializeJson(outDoc, payload, DeserializationOption::Filter(*filter))
-                       : deserializeJson(outDoc, payload);
+            DeserializationError error;
+            if (useListFilter) {
+                JsonDocument filter;
+                buildFirmwareListFilter(filter);
+                error = deserializeJson(outDoc, payload, DeserializationOption::Filter(filter));
+            } else {
+                error = deserializeJson(outDoc, payload);
+            }
             if (error) {
                 if (errorOut) *errorOut = String("JSON parse failed: ") + error.c_str();
                 outDoc.clear();
@@ -948,11 +953,9 @@ bool GetJsonFromLauncherHub(
 
     String serverUrl = "https://api.launcherhub.net/firmwares?category=" + g_launcherOtaTag + q;
 
-    JsonDocument filter;
-    buildFirmwareListFilter(filter);
     int status = 0;
     String err;
-    if (getInfo(serverUrl, g_launcherHubDoc, &filter, &status, &err)) {
+    if (getInfo(serverUrl, g_launcherHubDoc, true, &status, &err)) {
         g_launcherTotalFirmware = g_launcherHubDoc["total"].as<int>();
         int pageSize = g_launcherHubDoc["page_size"].as<int>();
         if (pageSize <= 0) pageSize = 1;
@@ -972,7 +975,7 @@ bool GetJsonFromLauncherHub(
 JsonDocument getVersionInfo(const String &fid, String *errorOut) {
     JsonDocument versions(launcherJsonAllocator());
     String serverUrl = "https://api.launcherhub.net/firmwares?fid=" + fid;
-    getInfo(serverUrl, versions, nullptr, nullptr, errorOut);
+    getInfo(serverUrl, versions, false, nullptr, errorOut);
     return versions;
 }
 
@@ -986,7 +989,7 @@ bool installFirmwareFromManifest(
     String serverUrl =
         "https://api.launcherhub.net/firmwares?fid=" + fid + "&version=" + launcherEncodeQueryValue(version);
     String fetchErr;
-    if (!getInfo(serverUrl, detail, nullptr, nullptr, &fetchErr)) {
+    if (!getInfo(serverUrl, detail, false, nullptr, &fetchErr)) {
         if (launcherUiIsCancelled()) {
             launcherUiError("Install cancelled.", "Cancelled");
         } else {

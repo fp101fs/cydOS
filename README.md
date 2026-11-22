@@ -52,8 +52,8 @@ A Pixel 8-inspired Material 3 (Material You) Android UI firmware for the **ESP32
 
 | Target | RAM (Static) | Runtime Free Heap (Boot) | `firmware.bin` (2.00 MB `factory` slot) | Slot Headroom | Dynamic App Pool |
 | --- | --- | --- | --- | --- | --- |
-| `cyd2usb` (ST7789) | 26.0% (`85.3 KB / 320 KB`) | `~77.0 KB` (`65.5 KB` max block) | 97.7% (`2,049,104 B / 2,097,152 B`) | `46.9 KB` | `1.94 MB` (`0x1F0000`) |
-| `cyd` (ILI9341) | 26.0% (`85.3 KB / 320 KB`) | — | 97.7% (`~2.05 MB / 2,097,152 B`) | `~46.3 KB` | `1.94 MB` (`0x1F0000`) |
+| `cyd2usb` (ST7789) | 23.8% (`78.1 KB / 320 KB`) | `~79.5 KB` (`69.6 KB` max block) | 97.7% (`2,049,472 B / 2,097,152 B`) | `46.6 KB` | `1.94 MB` (`0x1F0000`) |
+| `cyd` (ILI9341) | 23.8% (`78.1 KB / 320 KB`) | — | 97.7% (`~2.05 MB / 2,097,152 B`) | `~46.0 KB` | `1.94 MB` (`0x1F0000`) |
 
 ## Build, Verify & Flash
 ```bash

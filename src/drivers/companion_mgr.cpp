@@ -80,10 +80,10 @@ static bool s_hasNewAlert                    = false;
 static char s_alertSender[COMPANION_SENDER_MAX] = "";
 static char s_alertPreview[64]               = "";
 
-// Outbound command queue (small fixed ring to avoid heap churn)
+// Outbound command queue (lazily allocated when companion is configured)
 static constexpr size_t TX_QUEUE_CAP = 6;
 static constexpr size_t TX_MSG_MAX   = 512;
-static char   s_txQueue[TX_QUEUE_CAP][TX_MSG_MAX];
+static char (*s_txQueue)[TX_MSG_MAX] = nullptr;
 static size_t s_txHead  = 0;
 static size_t s_txTail  = 0;
 static size_t s_txCount = 0;
@@ -112,7 +112,7 @@ static void copyStr(char* dst, size_t cap, const char* src) {
 }
 
 static bool enqueueTxLocked(const char* json) {
-    if (!json || !json[0] || s_txCount >= TX_QUEUE_CAP) return false;
+    if (!s_txQueue || !json || !json[0] || s_txCount >= TX_QUEUE_CAP) return false;
     copyStr(s_txQueue[s_txTail], TX_MSG_MAX, json);
     s_txTail = (s_txTail + 1) % TX_QUEUE_CAP;
     s_txCount++;
@@ -120,7 +120,7 @@ static bool enqueueTxLocked(const char* json) {
 }
 
 static bool dequeueTxLocked(char* out, size_t cap) {
-    if (s_txCount == 0) return false;
+    if (!s_txQueue || s_txCount == 0) return false;
     copyStr(out, cap, s_txQueue[s_txHead]);
     s_txHead = (s_txHead + 1) % TX_QUEUE_CAP;
     s_txCount--;
@@ -1153,6 +1153,9 @@ static void companionWorkerTask(void* param) {
 static void ensureCompanionWorkerStarted() {
     if (!s_chatHist) {
         s_chatHist = (ChatHistorySlot*)calloc(COMPANION_MAX_MESSAGES, sizeof(ChatHistorySlot));
+    }
+    if (!s_txQueue) {
+        s_txQueue = (char (*)[TX_MSG_MAX])calloc(TX_QUEUE_CAP, TX_MSG_MAX);
     }
     if (!s_workerStarted) {
         s_workerStarted = true;

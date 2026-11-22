@@ -25,12 +25,13 @@
 #include "launcher/backup_manager.h"
 #include "launcher/onlineLauncher.h"
 #include "launcher/launcher_home_sync.h"
+#include "apps/app_store.h"
 
 static bool s_bootWasDown = false;
 
-// Increase Arduino loopTask stack from 8 KB to 14 KB so LVGL + mbedTLS HTTPS + ArduinoJson
-// in App Store Explore/OTA never overflow the stack.
-SET_LOOP_TASK_STACK_SIZE(14 * 1024);
+// Increase Arduino loopTask stack from 8 KB to 12 KB so LVGL + mbedTLS HTTPS + ArduinoJson
+// in App Store Explore/OTA never overflow the stack while maximizing contiguous heap.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 
 void setup() {
     // Release unused Classic Bluetooth DRAM (~36 KB) while keeping BLE (NimBLE) intact.
@@ -124,6 +125,16 @@ void loop() {
         }
     }
     s_bootWasDown = bootDown;
+
+    if (Serial.available()) {
+        int ch = Serial.read();
+        if (ch == 'E') {
+            Serial.printf("[TEST] Opening App Store -> Explore (free=%lu maxBlk=%lu)\n",
+                          (unsigned long)ESP.getFreeHeap(),
+                          (unsigned long)ESP.getMaxAllocHeap());
+            appStoreOpenTab(AppStoreTab::Explore);
+        }
+    }
 
     appManagerLoop();
     lv_timer_handler();
