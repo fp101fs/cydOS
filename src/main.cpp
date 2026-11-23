@@ -149,6 +149,10 @@ void loop() {
             clearOverlays();
             if (appManagerHasActiveApp()) appManagerClose();
             homeScreenGoPage(1);
+        } else if (ch == '2') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            homeScreenGoPage(2);
         } else if (ch == 'L') {
             clearOverlays();
             if (appManagerHasActiveApp()) appManagerClose();
@@ -161,11 +165,9 @@ void loop() {
             m3ApplyThemeAll();
         } else if (ch == 'Q') {
             clearOverlays();
-            if (appManagerHasActiveApp()) appManagerClose();
             quickSettingsOpen();
         } else if (ch == 'U') {
             clearOverlays();
-            if (appManagerHasActiveApp()) appManagerClose();
             navBarOpenMenu();
         } else if (ch == 'M') {
             clearOverlays();

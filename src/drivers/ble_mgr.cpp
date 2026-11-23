@@ -171,12 +171,14 @@ static void bleScanCompleteCb(NimBLEScanResults results) {
     int n = results.getCount();
     if (n < 0) n = 0;
 
-    BleScanEntry raw[BLE_MAX_SCAN_RESULTS];
-    size_t rawCount = 0;
+    // Keep NimBLE host-task stack usage tiny and never allocate inside critical section:
+    // s_pendingList is only read by bleMgrTick() once s_pendingReady == true.
+    if (!s_pendingList || s_pendingReady) return;
 
+    size_t rawCount = 0;
     for (int i = 0; i < n && rawCount < BLE_MAX_SCAN_RESULTS; ++i) {
         NimBLEAdvertisedDevice dev = results.getDevice(i);
-        BleScanEntry entry;
+        BleScanEntry& entry = s_pendingList[rawCount];
         memset(&entry, 0, sizeof(entry));
 
         std::string addrStr = dev.getAddress().toString();
@@ -195,28 +197,27 @@ static void bleScanCompleteCb(NimBLEScanResults results) {
         if (r > 0) r = 0;
         entry.rssi = (int8_t)r;
         entry.connectable = dev.isConnectable();
-
-        raw[rawCount++] = entry;
+        rawCount++;
     }
-
-    BleScanEntry sorted[BLE_MAX_SCAN_RESULTS];
-    size_t sortedCount = bleMgrMergeAndSortResults(raw, rawCount, sorted, BLE_MAX_SCAN_RESULTS);
 
     BLE_LOCK();
-    if (s_pendingList) {
-        for (size_t i = 0; i < sortedCount; ++i) {
-            s_pendingList[i] = sorted[i];
-        }
-        s_pendingCount = sortedCount;
-        s_pendingReady = true;
-    }
+    s_pendingCount = rawCount;
+    s_pendingReady = true;
     BLE_UNLOCK();
 }
 
 static bool ensureNimBleInit() {
     if (!ensureBleScanBufs()) return false;
-    if (s_initialized && NimBLEDevice::getInitialized()) {
+    if (NimBLEDevice::getInitialized()) {
+        s_initialized = true;
         return true;
+    }
+    uint32_t freeHeap = ESP.getFreeHeap();
+    uint32_t maxBlock = ESP.getMaxAllocHeap();
+    if (freeHeap < 48000 || maxBlock < 20000) {
+        Serial.printf("[BLE] Low heap for NimBLE init (free=%lu maxBlk=%lu)\n",
+                      (unsigned long)freeHeap, (unsigned long)maxBlock);
+        return false;
     }
     NimBLEDevice::init(BLE_DEVICE_NAME);
     s_initialized = NimBLEDevice::getInitialized();
@@ -412,10 +413,7 @@ bool bleMgrTick() {
     BLE_UNLOCK();
 
     if (ready && s_scanList) {
-        for (size_t i = 0; i < stagingCount; ++i) {
-            s_scanList[i] = staging[i];
-        }
-        s_scanCount = stagingCount;
+        s_scanCount = bleMgrMergeAndSortResults(staging, stagingCount, s_scanList, BLE_MAX_SCAN_RESULTS);
         s_scanning = false;
         g_sys.btScanning = false;
         g_sys.btFoundCount = (uint8_t)s_scanCount;
