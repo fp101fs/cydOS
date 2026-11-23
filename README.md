@@ -6,6 +6,7 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Contents
 
+- [Live Demo](#live-demo)
 - **UI & Navigation**
   - [Home Screen (Dark & Light)](#home-screen-dark--light)
   - [Tap-Arrow App Pages](#tap-arrow-app-pages)
@@ -42,6 +43,12 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 - [LLM Context](#llm-context)
 
 ---
+
+## Live Demo
+
+![cydOS Demo](screenshots/cydos_demo.gif)
+
+- Home → `Next` → `Next` → **SqLine Lab** → Menu → **Quick Settings** → **Settings**.
 
 ## Home Screen (Dark & Light)
 
