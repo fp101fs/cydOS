@@ -1,4 +1,5 @@
 #include "ble_mgr.h"
+#include "ble_hid_mgr.h"
 #include "wifi_mgr.h"
 #include "../theme/m3_theme.h"
 #include <Arduino.h>
@@ -225,11 +226,20 @@ static void pauseWifiForBleIfNeeded(uint32_t minFreeHeap) {
                   (unsigned long)ESP.getMaxAllocHeap());
 }
 
+static void shutdownNimBle();
+
 static void restoreWifiAfterBle() {
     if (!s_pausedWifi) return;
     s_pausedWifi = false;
+    // Release NimBLE host DRAM before restarting Wi-Fi so both stacks never
+    // compete for internal DRAM on no-PSRAM ESP32.
+    if (!bleHidIsActive()) {
+        shutdownNimBle();
+        delay(40);
+    }
     if (g_sys.wifiEnabled && !g_sys.airplaneMode) {
-        Serial.println("[BLE] Restoring Wi-Fi");
+        Serial.printf("[BLE] Restoring Wi-Fi (free=%lu B)\n",
+                      (unsigned long)ESP.getFreeHeap());
         wifiMgrSetEnabled(true);
     }
 }
