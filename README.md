@@ -38,7 +38,7 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
   - [Supported Hardware](#supported-hardware)
   - [Quick Start](#quick-start)
   - [Android Companion](#android-companion)
-  - [Add a New App](#add-a-new-app)
+  - [How to Add a New App to cydOS](#how-to-add-a-new-app-to-cydos)
 - [LLM Context](#llm-context)
 
 ---
@@ -52,6 +52,7 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 - Switch between **Dark**, **Light**, and *AMOLED Black* themes live.
 - Shows date, weather, `4×2` app grid, and search bar.
 - Persistent 3-button Android navigation bar sits at the bottom.
+- *Note*: Top-bar cell signal bars are just for show.
 
 ## Tap-Arrow App Pages
 
@@ -141,6 +142,8 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 - Works as a *Bluetooth HID* mouse and media remote.
 - Switch between **Pad** mode (with scroll strip) and **Remote** mode.
+- *Proof of concept*: Works, but not yet smooth or optimized.
+- *Planned*: Larger trackpad area with extra buttons in 1–2 popout menus.
 
 ## Screen Mirror
 
@@ -232,14 +235,29 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Supported Hardware
 
+| Dual-USB CYD (`cyd2usb`) | Classic CYD (`cyd`) |
+| :---: | :---: |
+| ![Dual-USB CYD](screenshots/hw_cyd2usb.jpg) | ![Classic CYD](screenshots/hw_cyd.jpg) |
+
 - **Dual-USB CYD (`cyd2usb`)**: *Default target.* Uses `ST7789` display and `GPIO 27` backlight.
+  - Has a bottom-middle USB-C port, micro-USB beside it, and white 4-pin port.
 - **Classic CYD (`cyd`)**: Single-USB board. Uses `ILI9341` display and `GPIO 21` backlight.
 - **Touch**: `XPT2046` resistive touch with light-tap tuning and noise filtering.
 - **MicroSD**: Optional VSPI card slot for apps, files, and backups.
 
 ## Quick Start
 
-<u>Install PlatformIO</u> before building the firmware.
+Copy and paste the prompt below to have your LLM install cydOS:
+
+```text
+Clone https://github.com/fp101fs/cydOS and install PlatformIO if needed.
+Detect my connected ESP32 Cheap Yellow Display (CYD) USB serial port.
+Ask whether my board is Dual-USB (cyd2usb, default) or Classic (cyd).
+Build and flash cydOS with `pio run -e <env> -t upload`.
+Verify the flash succeeded and report any serial boot errors.
+```
+
+<u>Install PlatformIO</u> before building manually:
 
 ```bash
 # Build both boards
@@ -259,6 +277,12 @@ Hold **BOOT** during reset to recalibrate touch.
 
 ## Android Companion
 
+**Read WhatsApp notifications on CYD!** This totally works and is tested.
+
+UI needs polishing, but the proof of concept is good to go.
+
+Pairing Android takes a few tricks. Check the companion app's info modals.
+
 The companion app lives in `android-companion/`.
 
 1. Open **Android Link** on your CYD.
@@ -267,7 +291,7 @@ The companion app lives in `android-companion/`.
 4. Join the same *2.4 GHz Wi-Fi* network.
 5. Scan the pairing QR code to connect.
 
-## Add a New App
+## How to Add a New App to cydOS
 
 Create one file at `src/apps/app_mytool.cpp`:
 
@@ -290,7 +314,7 @@ Rebuild and flash. No core UI edits are needed.
 
 ## LLM Context
 
-<u>Machine-readable summary for AI coding assistants.</u>
+<u>This section is Machine-readable summary for AI coding assistants.</u>
 
 ### Stack & Targets
 - **MCU**: ESP32-WROOM-32, 4 MB flash, 320 KB RAM, no PSRAM.
