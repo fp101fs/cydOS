@@ -12,12 +12,27 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
   - [Quick Settings Shade](#quick-settings-shade)
   - [Bottom Menu Popup](#bottom-menu-popup)
   - [Material 3 Modals](#material-3-modals)
+  - [On-Screen Keyboard](#on-screen-keyboard)
 - **Apps**
-  - [App Store](#app-store)
+  - [App Store (WIP)](#app-store-wip)
+  - [Files](#files)
+  - [Gallery](#gallery)
+  - [Terminal](#terminal)
   - [Wi-Fi Manager](#wi-fi-manager)
   - [Bluetooth BLE Scanner](#bluetooth-ble-scanner)
   - [BLE Trackpad & Remote](#ble-trackpad--remote)
+  - [Screen Mirror](#screen-mirror)
+  - [WhatsApp Companion](#whatsapp-companion)
+  - [Android Link](#android-link)
+  - [Calculator](#calculator)
+  - [About](#about)
+  - [Web Browser](#web-browser)
+  - [Music](#music)
+  - [Notes](#notes)
   - [Settings](#settings)
+  - [Clock](#clock)
+  - [SqLine Lab](#sqline-lab)
+  - [EEZ Studio](#eez-studio)
   - [System Info](#system-info)
 - **Setup & Development**
   - [Supported Hardware](#supported-hardware)
@@ -69,13 +84,41 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 - Reusable `m3_modal` dialogs with dimmed backdrop and rounded corners.
 - Supports action buttons, multi-step guides, and animated progress bars.
 
-## App Store
+## On-Screen Keyboard
+
+![On-Screen Keyboard](screenshots/keyboard.png)
+
+- Slide your finger across keys with a live floating preview.
+- Includes `ABC` and `123` layouts with Dark and Light themes.
+
+---
+
+## App Store (WIP)
 
 ![App Store](screenshots/app_store.png)
 
-- <mark>Install and run ESP32 `.bin` apps</mark> from flash or SD.
-- Browse **Explore**, **SD Card**, **Installed**, and **Tools** tabs.
-- New apps appear automatically at Home Screen slot `#1`.
+- <mark>Work in progress — not working yet.</mark>
+- Goal: embed [`m5launcher`](https://github.com/bmorcelli/Launcher) by **bmorcelli** inside cydOS.
+- Planned OTA and SD `.bin` app installer with dynamic partitions.
+
+## Files
+
+![Files](screenshots/files.png)
+
+- Browse internal flash or an optional **VSPI microSD** card.
+- Inspect file sizes, navigate folders, or format cards to `FAT32`.
+
+## Gallery
+
+![Gallery](screenshots/gallery.png)
+
+- Simple built-in image and color swatch viewer for the display.
+
+## Terminal
+
+![Terminal](screenshots/terminal.png)
+
+- Compact system console showing device status and quick diagnostic output.
 
 ## Wi-Fi Manager
 
@@ -99,12 +142,84 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 - Works as a *Bluetooth HID* mouse and media remote.
 - Switch between **Pad** mode (with scroll strip) and **Remote** mode.
 
+## Screen Mirror
+
+![Screen Mirror](screenshots/mirror.png)
+
+- Streams compressed RGB565 screen bands to the Android companion app.
+- Accepts live remote touch input and programmatic UI commands.
+
+## WhatsApp Companion
+
+![WhatsApp](screenshots/whatsapp.png)
+
+- Local Wi-Fi WebSocket bridge to the **Android Companion** app.
+- Read incoming notifications and send quick replies without cloud servers.
+
+## Android Link
+
+![Android Link](screenshots/android_link.png)
+
+- One-tap **QR code** setup for the Android companion app.
+- Step 1 downloads the APK; Step 2 pairs over Wi-Fi.
+
+## Calculator
+
+![Calculator](screenshots/calculator.png)
+
+- Clean Material 3 pocket calculator with large touch-friendly buttons.
+
+## About
+
+![About](screenshots/about.png)
+
+- Quick overview of cydOS version, display, and core features.
+
+## Web Browser
+
+![Web Browser](screenshots/browser.png)
+
+- Async HTTP and HTTPS text reader over Wi-Fi.
+- Follows redirects, strips HTML cleanly, and supports bookmarks.
+
+## Music
+
+![Music](screenshots/music.png)
+
+- Compact Material 3 media player interface with transport controls.
+
+## Notes
+
+![Notes](screenshots/notes.png)
+
+- Saves up to 8 notes in persistent ESP32 NVS flash.
+- Supports optional microSD export and import (`/pixel_notes.txt`).
+
 ## Settings
 
 ![Settings](screenshots/settings.png)
 
 - Toggle **Wi-Fi**, **Bluetooth**, **AMOLED Black**, and **LED Haptics**.
 - Recalibrate resistive touch or tune tap sensitivity anytime.
+
+## Clock
+
+![Clock](screenshots/clock.png)
+
+- Syncs time automatically via **NTP** over Wi-Fi.
+- Includes saved UTC timezone offset and a live monthly calendar.
+
+## SqLine Lab
+
+![SqLine Lab](screenshots/sqline_lab.png)
+
+- Visual-limits benchmark with gradients, radial arcs, charts, and FPS HUD.
+
+## EEZ Studio
+
+![EEZ Studio](screenshots/eez_studio.png)
+
+- HMI benchmark with gauges, live bars, font ladder, and stress grid.
 
 ## System Info
 
@@ -190,8 +305,8 @@ Rebuild and flash. No core UI edits are needed.
 - **Dynamic Pool** (`0x210000..0x400000`, 1.94 MB): Runtime-managed installed apps and data.
 
 ### Key Directories
-- `src/apps/`: 21 modular apps (`app_store`, `app_whatsapp`, `app_trackpad`, `app_screen_mirror`, etc.).
-- `src/launcher/`: Dynamic partitioner, LauncherHub OTA, SD flasher, backup, WebUI.
+- `src/apps/`: 21 modular apps (`app_store` WIP, `app_whatsapp`, `app_trackpad`, `app_screen_mirror`, etc.).
+- `src/launcher/`: Dynamic partitioner, LauncherHub OTA, SD flasher, backup, WebUI (WIP).
 - `src/drivers/`: Display, touch, Wi-Fi, NTP, HTTP, BLE, HID, WebSocket, mirror.
 - `src/components/`: Shared Material 3 widgets, `m3_modal`, and keyboard.
 - `src/ui/` & `src/theme/`: Home grid (arrow pagination), status bar, nav bar, themes.

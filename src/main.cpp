@@ -130,6 +130,7 @@ void loop() {
         int ch = Serial.read();
         auto clearOverlays = [&]() {
             if (m3ModalIsOpen()) m3ModalClose();
+            if (m3KeyboardIsOpen()) m3KeyboardHide();
             navBarCloseMenu();
             if (quickSettingsIsOpen()) quickSettingsClose();
         };
@@ -194,6 +195,26 @@ void loop() {
         } else if (ch == 'I') {
             clearOverlays();
             appManagerLaunchById("sysinfo");
+        } else if (ch == 'K') {
+            clearOverlays();
+            appManagerLaunchById("browser");
+            m3KeyboardShow(nullptr);
+        } else if (ch == 'O') {
+            char id[24] = "";
+            size_t len = 0;
+            uint32_t t0 = millis();
+            while (len + 1 < sizeof(id) && (millis() - t0) < 250) {
+                if (Serial.available()) {
+                    int c = Serial.read();
+                    if (c == '\n' || c == '\r') break;
+                    id[len++] = (char)c;
+                }
+            }
+            id[len] = '\0';
+            if (len > 0) {
+                clearOverlays();
+                appManagerLaunchById(id);
+            }
         }
     }
 
