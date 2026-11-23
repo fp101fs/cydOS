@@ -65,8 +65,6 @@ Runs on `ESP32-2432S028` (CYD Cheap Yellow Display) boards using **LVGL 8.4** an
 - Persistent 3-button Android navigation bar sits at the bottom.
 - *Note*: Top-bar cell signal bars are just for show.
 
-![Navigation Demo](screenshots/cydos_demo.gif)
-
 
 
 ## Tap-Arrow App Pages
