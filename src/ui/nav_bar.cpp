@@ -27,6 +27,13 @@ static void closeMenu() {
     if (s_menuPopup) lv_obj_add_flag(s_menuPopup, LV_OBJ_FLAG_HIDDEN);
 }
 
+void navBarOpenMenu() {
+    if (!s_menuPopup) return;
+    navBarRefreshTheme();
+    lv_obj_clear_flag(s_menuPopup, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_menuPopup);
+}
+
 void navBarCloseMenu() {
     closeMenu();
 }

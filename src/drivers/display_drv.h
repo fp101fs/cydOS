@@ -12,6 +12,7 @@ uint16_t displayHeight();
 
 typedef void (*DisplayFlushHookFn)(const lv_area_t* area, const lv_color_t* color_p);
 void displaySetFlushHook(DisplayFlushHookFn fn);
+void displayCaptureScreenshotSerial();
 
 // Brightness 10..100%
 void displaySetBrightness(uint8_t percent);

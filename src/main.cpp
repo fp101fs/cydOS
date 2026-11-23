@@ -128,11 +128,72 @@ void loop() {
 
     if (Serial.available()) {
         int ch = Serial.read();
+        auto clearOverlays = [&]() {
+            if (m3ModalIsOpen()) m3ModalClose();
+            navBarCloseMenu();
+            if (quickSettingsIsOpen()) quickSettingsClose();
+        };
         if (ch == 'E') {
             Serial.printf("[TEST] Opening App Store -> Explore (free=%lu maxBlk=%lu)\n",
                           (unsigned long)ESP.getFreeHeap(),
                           (unsigned long)ESP.getMaxAllocHeap());
             appStoreOpenTab(AppStoreTab::Explore);
+        } else if (ch == 'S') {
+            displayCaptureScreenshotSerial();
+        } else if (ch == 'H') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            homeScreenGoPage(0);
+        } else if (ch == '1') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            homeScreenGoPage(1);
+        } else if (ch == 'L') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            g_sys.lightMode = true;
+            m3ApplyThemeAll();
+            homeScreenGoPage(0);
+        } else if (ch == 'D') {
+            clearOverlays();
+            g_sys.lightMode = false;
+            m3ApplyThemeAll();
+        } else if (ch == 'Q') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            quickSettingsOpen();
+        } else if (ch == 'U') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            navBarOpenMenu();
+        } else if (ch == 'M') {
+            clearOverlays();
+            if (appManagerHasActiveApp()) appManagerClose();
+            static const M3ModalBtn kDemoBtns[2] = {
+                { "Cancel", 0, 0, nullptr, true },
+                { "Continue", M3Color::PRIMARY_CONT, M3Color::PRIMARY, nullptr, true }
+            };
+            m3ModalShow("Confirm Action",
+                        "Material 3 modal dialog with dimmed backdrop and action buttons.",
+                        kDemoBtns, 2, M3Color::PRIMARY);
+        } else if (ch == 'A') {
+            clearOverlays();
+            appManagerLaunchById("app_store");
+        } else if (ch == 'W') {
+            clearOverlays();
+            appManagerLaunchById("wifi");
+        } else if (ch == 'B') {
+            clearOverlays();
+            appManagerLaunchById("bluetooth");
+        } else if (ch == 'T') {
+            clearOverlays();
+            appManagerLaunchById("trackpad");
+        } else if (ch == 'G') {
+            clearOverlays();
+            appManagerLaunchById("settings");
+        } else if (ch == 'I') {
+            clearOverlays();
+            appManagerLaunchById("sysinfo");
         }
     }
 

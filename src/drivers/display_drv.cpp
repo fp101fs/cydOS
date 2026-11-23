@@ -38,6 +38,32 @@ void displaySetFlushHook(DisplayFlushHookFn fn) {
     s_flushHook = fn;
 }
 
+static void screenshotFlushHook(const lv_area_t* area, const lv_color_t* color_p) {
+    uint16_t hdr[4] = {
+        (uint16_t)area->x1,
+        (uint16_t)area->y1,
+        (uint16_t)(area->x2 - area->x1 + 1),
+        (uint16_t)(area->y2 - area->y1 + 1)
+    };
+    Serial.write("STRP", 4);
+    Serial.write((const uint8_t*)hdr, sizeof(hdr));
+    Serial.write((const uint8_t*)color_p, (size_t)hdr[2] * (size_t)hdr[3] * 2U);
+}
+
+void displayCaptureScreenshotSerial() {
+    DisplayFlushHookFn prev = s_flushHook;
+    Serial.flush();
+    uint16_t dims[2] = { s_width, s_height };
+    Serial.write("SCRN", 4);
+    Serial.write((const uint8_t*)dims, sizeof(dims));
+    s_flushHook = screenshotFlushHook;
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(nullptr);
+    s_flushHook = prev;
+    Serial.write("DONE", 4);
+    Serial.flush();
+}
+
 void displayInit() {
     pinMode(PIN_BOOT, INPUT_PULLUP);
     pinMode(PIN_LED_R, OUTPUT);

@@ -9,7 +9,9 @@
 #include <stdio.h>
 
 static constexpr uint8_t APPS_PER_PAGE = 8;
-static constexpr uint8_t MAX_PAGES = (APP_MAX_COUNT + APPS_PER_PAGE - 1) / APPS_PER_PAGE;
+static constexpr uint8_t MAX_PAGES = 8;
+static constexpr uint8_t MAX_NAV_TILES = MAX_PAGES * 2;
+static constexpr uint8_t MAX_TILE_LABELS = APP_MAX_COUNT + MAX_NAV_TILES;
 
 static constexpr int16_t GLANCE_Y     = 26;
 static constexpr int16_t GLANCE_H     = 26;
@@ -36,8 +38,11 @@ static lv_obj_t* s_weatherCloud = nullptr;
 static lv_obj_t* s_atGlanceWeather = nullptr;
 static lv_obj_t* s_searchBar = nullptr;
 static lv_obj_t* s_searchHint = nullptr;
-static lv_obj_t* s_tileLabels[APP_MAX_COUNT] = {};
+static lv_obj_t* s_tileLabels[MAX_TILE_LABELS] = {};
 static uint8_t s_tileCount = 0;
+static lv_obj_t* s_navBoxes[MAX_NAV_TILES] = {};
+static lv_obj_t* s_navIcons[MAX_NAV_TILES] = {};
+static uint8_t s_navCount = 0;
 
 static void appIconClickCb(lv_event_t* e) {
     const AppMeta* meta = (const AppMeta*)lv_event_get_user_data(e);
@@ -166,7 +171,64 @@ static lv_obj_t* createAppTile(lv_obj_t* parent, const AppMeta* meta, int16_t x,
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
     lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, 0, -1);
 
-    if (s_tileCount < APP_MAX_COUNT) {
+    if (s_tileCount < MAX_TILE_LABELS) {
+        s_tileLabels[s_tileCount++] = lbl;
+    }
+
+    return wrap;
+}
+
+static void navTileClickCb(lv_event_t* e) {
+    uint8_t targetPage = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    m3PulseFeedback();
+    homeScreenGoPage(targetPage);
+}
+
+static lv_obj_t* createNavTile(lv_obj_t* parent, const char* symbol, const char* text,
+                               uint8_t targetPage, int16_t x, int16_t y) {
+    lv_obj_t* wrap = lv_obj_create(parent);
+    lv_obj_set_size(wrap, TILE_W, TILE_H);
+    lv_obj_set_pos(wrap, x, y);
+    lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(wrap, 0, 0);
+    lv_obj_set_style_pad_all(wrap, 0, 0);
+    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(wrap, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(wrap, navTileClickCb, LV_EVENT_CLICKED, (void*)(uintptr_t)targetPage);
+
+    lv_obj_t* icoBox = lv_obj_create(wrap);
+    lv_obj_set_size(icoBox, ICON_BOX_SZ, ICON_BOX_SZ);
+    lv_obj_align(icoBox, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(icoBox, lv_color_hex(m3SurfaceHighHex()), 0);
+    lv_obj_set_style_bg_opa(icoBox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(icoBox, 1, 0);
+    lv_obj_set_style_border_color(icoBox, lv_color_hex(m3OutlineHex()), 0);
+    lv_obj_set_style_border_opa(icoBox, LV_OPA_50, 0);
+    lv_obj_set_style_radius(icoBox, M3Dim::RADIUS_CARD, 0);
+    lv_obj_clear_flag(icoBox, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* ico = lv_label_create(icoBox);
+    lv_label_set_text(ico, symbol);
+    lv_obj_set_style_text_color(ico, lv_color_hex(m3PrimaryHex()), 0);
+    lv_obj_set_style_text_font(ico, &lv_font_montserrat_20, 0);
+    lv_obj_center(ico);
+
+    if (s_navCount < MAX_NAV_TILES) {
+        s_navBoxes[s_navCount] = icoBox;
+        s_navIcons[s_navCount] = ico;
+        s_navCount++;
+    }
+
+    lv_obj_t* lbl = lv_label_create(wrap);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_width(lbl, TILE_W);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(m3TextPrimaryHex()), 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, 0, -1);
+
+    if (s_tileCount < MAX_TILE_LABELS) {
         s_tileLabels[s_tileCount++] = lbl;
     }
 
@@ -182,17 +244,28 @@ static void buildAppGrid(bool goFirstPage) {
     lv_obj_clean(s_pager);
     lv_obj_clean(s_dotRow);
     s_tileCount = 0;
-    for (uint8_t i = 0; i < APP_MAX_COUNT; ++i) s_tileLabels[i] = nullptr;
+    s_navCount = 0;
+    for (uint8_t i = 0; i < MAX_TILE_LABELS; ++i) s_tileLabels[i] = nullptr;
+    for (uint8_t i = 0; i < MAX_NAV_TILES; ++i) {
+        s_navBoxes[i] = nullptr;
+        s_navIcons[i] = nullptr;
+    }
     for (uint8_t i = 0; i < MAX_PAGES; ++i) s_dots[i] = nullptr;
 
     uint8_t totalApps = appGetCount();
-    s_pageCount = (totalApps == 0) ? 1 : (uint8_t)((totalApps + APPS_PER_PAGE - 1) / APPS_PER_PAGE);
-    if (s_pageCount > MAX_PAGES) s_pageCount = MAX_PAGES;
-
     int16_t gridW = 3 * TILE_STEP_X + TILE_W;
     int16_t tileStartX = (int16_t)(((int16_t)w - gridW) / 2);
 
-    for (uint8_t p = 0; p < s_pageCount; ++p) {
+    auto slotX = [&](uint8_t slot) -> int16_t {
+        return (int16_t)(tileStartX + (slot % 4) * TILE_STEP_X);
+    };
+    auto slotY = [&](uint8_t slot) -> int16_t {
+        return (int16_t)(TILE_START_Y + (slot / 4) * TILE_STEP_Y);
+    };
+
+    uint8_t appCursor = 0;
+    uint8_t p = 0;
+    do {
         lv_obj_t* pageObj = lv_obj_create(s_pager);
         lv_obj_set_size(pageObj, w, PAGER_H);
         lv_obj_set_pos(pageObj, (lv_coord_t)(p * w), 0);
@@ -201,15 +274,32 @@ static void buildAppGrid(bool goFirstPage) {
         lv_obj_set_style_pad_all(pageObj, 0, 0);
         lv_obj_clear_flag(pageObj, LV_OBJ_FLAG_SCROLLABLE);
 
-        uint8_t startIdx = p * APPS_PER_PAGE;
-        for (uint8_t i = 0; i < APPS_PER_PAGE && (startIdx + i) < totalApps; ++i) {
-            const AppMeta* meta = appGetAt(startIdx + i);
-            int col = i % 4;
-            int row = i / 4;
-            createAppTile(pageObj, meta, (int16_t)(tileStartX + col * TILE_STEP_X),
-                          (int16_t)(TILE_START_Y + row * TILE_STEP_Y));
+        uint8_t rem = (appCursor < totalApps) ? (uint8_t)(totalApps - appCursor) : 0;
+        bool hasLeft = (p > 0);
+        uint8_t maxWithoutRight = hasLeft ? 7 : 8;
+        bool hasRight = (rem > maxWithoutRight) && ((p + 1) < MAX_PAGES);
+
+        // Slot 4 (5th position, bottom-left): Left Arrow on page 2+
+        if (hasLeft) {
+            createNavTile(pageObj, LV_SYMBOL_LEFT, "Back", (uint8_t)(p - 1), slotX(4), slotY(4));
         }
-    }
+
+        // Fill app tiles into available slots (skipping slot 4 if Left Arrow, slot 7 if Right Arrow)
+        for (uint8_t slot = 0; slot < APPS_PER_PAGE && appCursor < totalApps; ++slot) {
+            if (hasLeft && slot == 4) continue;
+            if (hasRight && slot == 7) continue;
+            createAppTile(pageObj, appGetAt(appCursor++), slotX(slot), slotY(slot));
+        }
+
+        // Slot 7 (8th position, bottom-right): Right Arrow when more apps exist
+        if (hasRight) {
+            createNavTile(pageObj, LV_SYMBOL_RIGHT, "Next", (uint8_t)(p + 1), slotX(7), slotY(7));
+        }
+
+        ++p;
+    } while (appCursor < totalApps && p < MAX_PAGES);
+
+    s_pageCount = p;
 
     for (uint8_t i = 0; i < s_pageCount; ++i) {
         s_dots[i] = lv_obj_create(s_dotRow);
@@ -394,6 +484,15 @@ void homeScreenRefreshTheme() {
     for (uint8_t i = 0; i < s_tileCount; ++i) {
         if (s_tileLabels[i]) {
             lv_obj_set_style_text_color(s_tileLabels[i], lv_color_hex(m3TextPrimaryHex()), 0);
+        }
+    }
+    for (uint8_t i = 0; i < s_navCount; ++i) {
+        if (s_navBoxes[i]) {
+            lv_obj_set_style_bg_color(s_navBoxes[i], lv_color_hex(m3SurfaceHighHex()), 0);
+            lv_obj_set_style_border_color(s_navBoxes[i], lv_color_hex(m3OutlineHex()), 0);
+        }
+        if (s_navIcons[i]) {
+            lv_obj_set_style_text_color(s_navIcons[i], lv_color_hex(m3PrimaryHex()), 0);
         }
     }
     updatePageDots(computeCurrentPage());

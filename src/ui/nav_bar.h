@@ -5,4 +5,5 @@
 void navBarInit();
 void navBarRefreshTheme();
 void navBarBringToFront();
+void navBarOpenMenu();
 void navBarCloseMenu();

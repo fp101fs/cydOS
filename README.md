@@ -1,14 +1,31 @@
 # cydOS (`v1.1`)
 
-A **Pixel 8 Material 3** OS for the *ESP32 Cheap Yellow Display*.
+An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
+
+---
+
+## Screenshots
+
+| Home (Dark) | Home (Page 2) | Home (Light) | Quick Settings |
+| :---: | :---: | :---: | :---: |
+| ![Home Dark](screenshots/home_dark.png) | ![Home Page 2](screenshots/home_page2.png) | ![Home Light](screenshots/home_light.png) | ![Quick Settings](screenshots/quick_settings.png) |
+
+| Menu Popup | Modal Dialog | App Store | Wi-Fi |
+| :---: | :---: | :---: | :---: |
+| ![Menu](screenshots/hamburger_menu.png) | ![Modal](screenshots/modal.png) | ![App Store](screenshots/app_store.png) | ![Wi-Fi](screenshots/wifi.png) |
+
+| Bluetooth | Trackpad | Settings | System Info |
+| :---: | :---: | :---: | :---: |
+| ![Bluetooth](screenshots/bluetooth.png) | ![Trackpad](screenshots/trackpad.png) | ![Settings](screenshots/settings.png) | ![System Info](screenshots/sysinfo.png) |
 
 ---
 
 ## What It Does
 
 - **Material 3 UI**: Switch between **Dark**, **Light**, and *AMOLED Black* themes live.
+- **Tap-Arrow Pagination**: Use `Next` and `Back` tiles to flip app pages easily.
 - **App Store**: <mark>Install and run ESP32 `.bin` apps</mark> from flash or SD.
 - **Modular Apps**: Drop one `src/apps/app_*.cpp` file to add a new app.
 - **Wi-Fi & Browser**: Connect to 2.4 GHz Wi-Fi and read web pages.
@@ -49,7 +66,7 @@ Hold **BOOT** during reset to recalibrate touch.
 The companion app lives in `android-companion/`.
 
 1. Open **Android Link** on your CYD.
-2. Scan the QR code to install `pixel-cyd-companion.apk`.
+2. Scan the QR code to install the companion APK.
 3. Grant **Notification Access** on your phone.
 4. Join the same *2.4 GHz Wi-Fi* network.
 5. Scan the pairing QR code to connect.
@@ -88,7 +105,7 @@ Rebuild and flash. No core UI edits are needed.
 ### Flash Partition Map (`partitions_launcher_4mb.csv`)
 - `nvs` (`0x009000`, 20 KB): Settings, Wi-Fi, notes, WhatsApp, App Store registry.
 - `otadata` (`0x00E000`, 8 KB): Boot slot selector (`factory` vs installed app).
-- `factory` (`0x010000`, 2.00 MB): Main cydOS firmware (~97.7% full).
+- `factory` (`0x010000`, 2.00 MB): Main cydOS firmware (~97.6% full).
 - **Dynamic Pool** (`0x210000..0x400000`, 1.94 MB): Runtime-managed installed apps and data.
 
 ### Key Directories
@@ -96,13 +113,13 @@ Rebuild and flash. No core UI edits are needed.
 - `src/launcher/`: Dynamic partitioner, LauncherHub OTA, SD flasher, backup, WebUI.
 - `src/drivers/`: Display, touch, Wi-Fi, NTP, HTTP, BLE, HID, WebSocket, mirror.
 - `src/components/`: Shared Material 3 widgets, `m3_modal`, and keyboard.
-- `src/ui/` & `src/theme/`: Home screen, status bar, nav bar, themes.
-- `tools/`: Host C++ unit tests and `verify_partitions.py`.
+- `src/ui/` & `src/theme/`: Home grid (arrow pagination), status bar, nav bar, themes.
+- `tools/`: Host C++ tests, `verify_partitions.py`, and `capture_screenshot.py`.
 
 ### Critical Constraints
 - **DRAM Budget**: Heap is tight during HTTPS TLS (~77 KB free).
 - **TLS Safety**: Free Explore cards before HTTPS calls. Release Classic BT DRAM.
-- **Stack Size**: `loopTask` uses a 14 KB stack for TLS calls.
+- **Stack Size**: `loopTask` uses a 12 KB stack for TLS calls.
 - **Touch Pins**: `CLK=25`, `MOSI=32`, `MISO=39`, `CS=33`, `IRQ=36`.
 - **SD Pins (VSPI)**: `SCK=18`, `MISO=19`, `MOSI=23`, `CS=5`.
 - **Companion Protocol**: RFC 6455 WebSocket on `:8765`, pairing endpoint on `:8766`.
@@ -110,4 +127,5 @@ Rebuild and flash. No core UI edits are needed.
 ### Verification Commands
 - **Build**: `pio run -e cyd2usb -e cyd`
 - **Partitions**: `python3 tools/verify_partitions.py`
+- **Screenshot**: `python3 tools/capture_screenshot.py /dev/cu.usbserial-140 out.png`
 - **Companion APK**: Built via `.github/workflows/build-companion-apk.yml`.
