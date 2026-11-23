@@ -12,7 +12,7 @@
 #include <string.h>
 
 static constexpr const char* COMPANION_APK_URL =
-    "https://github.com/fp101fs/pixel-cyd/releases/latest/download/pixel-cyd-companion.apk";
+    "https://github.com/fp101fs/cydOS/releases/latest/download/pixel-cyd-companion.apk";
 static constexpr uint16_t PAIR_HTTP_PORT = 8766;
 static constexpr int16_t  QR_CODE_SZ     = 112;
 static constexpr int16_t  QR_FRAME_SZ    = 124;

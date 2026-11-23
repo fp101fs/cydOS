@@ -1,6 +1,6 @@
-# Pixel 8 CYD UI (`v1.1`)
+# cydOS (`v1.1`)
 
-A **Pixel 8 Material 3** firmware for the *ESP32 Cheap Yellow Display*.
+A **Pixel 8 Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
@@ -88,7 +88,7 @@ Rebuild and flash. No core UI edits are needed.
 ### Flash Partition Map (`partitions_launcher_4mb.csv`)
 - `nvs` (`0x009000`, 20 KB): Settings, Wi-Fi, notes, WhatsApp, App Store registry.
 - `otadata` (`0x00E000`, 8 KB): Boot slot selector (`factory` vs installed app).
-- `factory` (`0x010000`, 2.00 MB): Main Pixel CYD firmware (~97.7% full).
+- `factory` (`0x010000`, 2.00 MB): Main cydOS firmware (~97.7% full).
 - **Dynamic Pool** (`0x210000..0x400000`, 1.94 MB): Runtime-managed installed apps and data.
 
 ### Key Directories
