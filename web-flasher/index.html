@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cydOS Web Flasher</title>
+  <meta name="description" content="Install cydOS on your ESP32 Cheap Yellow Display (CYD) directly from Chrome or Edge." />
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --surface: #191c24;
+      --surface-hi: #222631;
+      --outline: #353b4b;
+      --primary: #8ab4f8;
+      --primary-cont: #1d3557;
+      --on-primary: #07234b;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #81c995;
+      --warn: #fdd663;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100svh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(circle at 15% 15%, rgba(29, 53, 87, 0.45), transparent 45%),
+        radial-gradient(circle at 85% 80%, rgba(58, 47, 82, 0.35), transparent 45%),
+        var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+    }
+
+    main {
+      width: 100%;
+      max-width: 680px;
+      background: var(--surface);
+      border: 1px solid var(--outline);
+      border-radius: 24px;
+      padding: 28px 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand img {
+      width: 48px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid var(--outline);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .gh-link {
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: var(--surface-hi);
+      border: 1px solid var(--outline);
+    }
+
+    .gh-link:hover { border-color: var(--primary); }
+
+    .section-label {
+      margin: 0 0 12px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .boards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .board-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 18px;
+      background: var(--surface-hi);
+      border: 2px solid var(--outline);
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .board-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .board-card:has(input:checked) {
+      border-color: var(--primary);
+      background: rgba(29, 53, 87, 0.45);
+    }
+
+    .board-card img {
+      width: 100%;
+      height: 140px;
+      object-fit: contain;
+      background: #fff;
+      border-radius: 12px;
+      padding: 6px;
+    }
+
+    .board-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .badge {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--primary-cont);
+      color: var(--primary);
+    }
+
+    .board-desc {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.4;
+    }
+
+    .flash-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 16px;
+      border-radius: 18px;
+      background: var(--surface-hi);
+      border: 1px solid var(--outline);
+      text-align: center;
+    }
+
+    .install-btn {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 13px 28px;
+      font-size: 1rem;
+      font-weight: 700;
+      background: var(--primary);
+      color: var(--on-primary);
+      cursor: pointer;
+      transition: transform 0.12s ease, opacity 0.12s ease;
+    }
+
+    .install-btn:hover { opacity: 0.92; }
+    .install-btn:active { transform: scale(0.98); }
+
+    .unsupported {
+      color: var(--warn);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .steps {
+      margin: 20px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+
+    .steps strong { color: var(--text); }
+
+    footer {
+      margin-top: 20px;
+      padding-top: 14px;
+      border-top: 1px solid var(--outline);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    code {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 1px 6px;
+      border-radius: 6px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand">
+        <img src="home_dark.png" alt="cydOS Homescreen" />
+        <div>
+          <h1>cydOS Web Flasher</h1>
+          <p class="subtitle">Android-inspired Material 3 OS for ESP32 CYD</p>
+        </div>
+      </div>
+      <a class="gh-link" href="https://github.com/fp101fs/cydOS" target="_blank" rel="noreferrer">GitHub Repo</a>
+    </header>
+
+    <p class="section-label">1. Choose Your CYD Board</p>
+    <div class="boards">
+      <label class="board-card">
+        <input type="radio" name="board" value="cyd2usb" checked />
+        <img src="hw_cyd2usb.jpg" alt="Dual-USB CYD board" />
+        <div class="board-title">
+          <span>Dual-USB CYD</span>
+          <span class="badge">Default</span>
+        </div>
+        <p class="board-desc">USB-C + micro-USB + white 4-pin port on bottom. <code>ST7789</code> display (<code>cyd2usb</code>).</p>
+      </label>
+
+      <label class="board-card">
+        <input type="radio" name="board" value="cyd" />
+        <img src="hw_cyd.jpg" alt="Classic Single-USB CYD board" />
+        <div class="board-title">
+          <span>Classic CYD</span>
+          <span class="badge">Single-USB</span>
+        </div>
+        <p class="board-desc">Classic single micro-USB ESP32-2432S028 board. <code>ILI9341</code> display (<code>cyd</code>).</p>
+      </label>
+    </div>
+
+    <p class="section-label">2. Connect &amp; Flash</p>
+    <div class="flash-box">
+      <esp-web-install-button id="installer" manifest="./manifest-cyd2usb.json">
+        <button slot="activate" class="install-btn">Install cydOS</button>
+        <p slot="unsupported" class="unsupported">
+          Web Serial is not supported in this browser.<br />
+          Open this page in desktop <strong>Chrome</strong> or <strong>Edge</strong> to flash via USB.
+        </p>
+        <p slot="not-allowed" class="unsupported">
+          HTTPS is required for Web Serial flashing.
+        </p>
+      </esp-web-install-button>
+      <small id="selected-info" style="color: var(--muted);">Target: <code>cyd2usb</code> (Dual-USB ST7789)</small>
+    </div>
+
+    <ol class="steps">
+      <li>Connect your CYD to your computer with a <strong>data-capable USB cable</strong>.</li>
+      <li>Click <strong>Install cydOS</strong> and pick the USB serial port (CP210x / CH340).</li>
+      <li>If connection stalls, hold <strong>BOOT</strong> while clicking Install until flashing starts.</li>
+      <li>After reboot, hold <strong>BOOT</strong> during reset anytime to recalibrate touch.</li>
+    </ol>
+
+    <footer>
+      <span>Powered by ESP Web Tools</span>
+      <span id="build-meta">Built automatically from <code>main</code></span>
+    </footer>
+  </main>
+
+  <script>
+    const installer = document.getElementById("installer");
+    const info = document.getElementById("selected-info");
+    const labels = {
+      cyd2usb: "Target: <code>cyd2usb</code> (Dual-USB ST7789)",
+      cyd: "Target: <code>cyd</code> (Classic Single-USB ILI9341)"
+    };
+
+    document.querySelectorAll('input[name="board"]').forEach((radio) => {
+      radio.addEventListener("change", (e) => {
+        const env = e.target.value;
+        installer.setAttribute("manifest", `./manifest-${env}.json`);
+        info.innerHTML = labels[env];
+      });
+    });
+
+    fetch("./build-info.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.sha) {
+          document.getElementById("build-meta").innerHTML =
+            `Build <code>${data.sha}</code> &middot; ${data.date}`;
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

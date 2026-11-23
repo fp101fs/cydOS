@@ -260,6 +260,12 @@ Runs on `ESP32-2432S028` (CYD Cheap Yellow Display) boards using **LVGL 8.4** an
 
 ## Quick Start
 
+### Option 1: Browser Web Flasher (Easiest)
+
+<mark>Flash cydOS straight from Chrome or Edge:</mark> **[Open cydOS Web Flasher](https://fp101fs.github.io/cydOS/)**
+
+### Option 2: Flash With an LLM
+
 Copy and paste the prompt below to have your LLM install cydOS:
 
 ```text

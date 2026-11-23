@@ -1,0 +1,138 @@
+name: Deploy Web Flasher (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'platformio.ini'
+      - 'partitions_launcher_4mb.csv'
+      - 'web-flasher/**'
+      - '.github/workflows/deploy-web-flasher.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build cyd2usb and cyd firmware
+        run: pio run -e cyd2usb -e cyd
+
+      - name: Assemble GitHub Pages site & ESP Web Tools manifests
+        run: |
+          mkdir -p _site/firmware/cyd2usb _site/firmware/cyd
+
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -n 1)
+          if [ -z "$BOOT_APP0" ]; then
+            echo "boot_app0.bin not found!" >&2
+            exit 1
+          fi
+
+          for env in cyd2usb cyd; do
+            cp ".pio/build/${env}/bootloader.bin" "_site/firmware/${env}/bootloader.bin"
+            cp ".pio/build/${env}/partitions.bin" "_site/firmware/${env}/partitions.bin"
+            cp "$BOOT_APP0" "_site/firmware/${env}/boot_app0.bin"
+            cp ".pio/build/${env}/firmware.bin" "_site/firmware/${env}/firmware.bin"
+          done
+
+          cp web-flasher/index.html _site/index.html
+          cp screenshots/hw_cyd2usb.jpg _site/hw_cyd2usb.jpg
+          cp screenshots/hw_cyd.jpg _site/hw_cyd.jpg
+          cp screenshots/home_dark.png _site/home_dark.png
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_DATE="$(date -u +%Y-%m-%d)"
+
+          cat > _site/build-info.json <<EOF
+          {
+            "sha": "${SHORT_SHA}",
+            "date": "${BUILD_DATE}"
+          }
+          EOF
+
+          cat > _site/manifest-cyd2usb.json <<EOF
+          {
+            "name": "cydOS (Dual-USB CYD / ST7789)",
+            "version": "1.1-${SHORT_SHA}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "ESP32",
+                "parts": [
+                  { "path": "firmware/cyd2usb/bootloader.bin", "offset": 4096 },
+                  { "path": "firmware/cyd2usb/partitions.bin", "offset": 32768 },
+                  { "path": "firmware/cyd2usb/boot_app0.bin",  "offset": 57344 },
+                  { "path": "firmware/cyd2usb/firmware.bin",   "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          cat > _site/manifest-cyd.json <<EOF
+          {
+            "name": "cydOS (Classic CYD / ILI9341)",
+            "version": "1.1-${SHORT_SHA}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "ESP32",
+                "parts": [
+                  { "path": "firmware/cyd/bootloader.bin", "offset": 4096 },
+                  { "path": "firmware/cyd/partitions.bin", "offset": 32768 },
+                  { "path": "firmware/cyd/boot_app0.bin",  "offset": 57344 },
+                  { "path": "firmware/cyd/firmware.bin",   "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
