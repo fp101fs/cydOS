@@ -6,21 +6,24 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Contents
 
-- [Home Screen (Dark & Light)](#home-screen-dark--light)
-- [Tap-Arrow App Pages](#tap-arrow-app-pages)
-- [Quick Settings Shade](#quick-settings-shade)
-- [Bottom Menu Popup](#bottom-menu-popup)
-- [Material 3 Modals](#material-3-modals)
-- [App Store](#app-store)
-- [Wi-Fi Manager](#wi-fi-manager)
-- [Bluetooth BLE Scanner](#bluetooth-ble-scanner)
-- [BLE Trackpad & Remote](#ble-trackpad--remote)
-- [Settings](#settings)
-- [System Info](#system-info)
-- [Supported Hardware](#supported-hardware)
-- [Quick Start](#quick-start)
-- [Android Companion](#android-companion)
-- [Add a New App](#add-a-new-app)
+- **UI & Navigation**
+  - [Home Screen (Dark & Light)](#home-screen-dark--light)
+  - [Tap-Arrow App Pages](#tap-arrow-app-pages)
+  - [Quick Settings Shade](#quick-settings-shade)
+  - [Bottom Menu Popup](#bottom-menu-popup)
+  - [Material 3 Modals](#material-3-modals)
+- **Apps**
+  - [App Store](#app-store)
+  - [Wi-Fi Manager](#wi-fi-manager)
+  - [Bluetooth BLE Scanner](#bluetooth-ble-scanner)
+  - [BLE Trackpad & Remote](#ble-trackpad--remote)
+  - [Settings](#settings)
+  - [System Info](#system-info)
+- **Setup & Development**
+  - [Supported Hardware](#supported-hardware)
+  - [Quick Start](#quick-start)
+  - [Android Companion](#android-companion)
+  - [Add a New App](#add-a-new-app)
 - [LLM Context](#llm-context)
 
 ---
