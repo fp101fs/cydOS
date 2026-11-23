@@ -4,35 +4,113 @@ An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
+## Contents
+
+- [Home Screen (Dark & Light)](#home-screen-dark--light)
+- [Tap-Arrow App Pages](#tap-arrow-app-pages)
+- [Quick Settings Shade](#quick-settings-shade)
+- [Bottom Menu Popup](#bottom-menu-popup)
+- [Material 3 Modals](#material-3-modals)
+- [App Store](#app-store)
+- [Wi-Fi Manager](#wi-fi-manager)
+- [Bluetooth BLE Scanner](#bluetooth-ble-scanner)
+- [BLE Trackpad & Remote](#ble-trackpad--remote)
+- [Settings](#settings)
+- [System Info](#system-info)
+- [Supported Hardware](#supported-hardware)
+- [Quick Start](#quick-start)
+- [Android Companion](#android-companion)
+- [Add a New App](#add-a-new-app)
+- [LLM Context](#llm-context)
+
 ---
 
-## Screenshots
+## Home Screen (Dark & Light)
 
-| Home (Dark) | Home (Page 2) | Home (Light) | Quick Settings |
-| :---: | :---: | :---: | :---: |
-| ![Home Dark](screenshots/home_dark.png) | ![Home Page 2](screenshots/home_page2.png) | ![Home Light](screenshots/home_light.png) | ![Quick Settings](screenshots/quick_settings.png) |
+| Dark Mode | Light Mode |
+| :---: | :---: |
+| ![Home Dark](screenshots/home_dark.png) | ![Home Light](screenshots/home_light.png) |
 
-| Menu Popup | Modal Dialog | App Store | Wi-Fi |
-| :---: | :---: | :---: | :---: |
-| ![Menu](screenshots/hamburger_menu.png) | ![Modal](screenshots/modal.png) | ![App Store](screenshots/app_store.png) | ![Wi-Fi](screenshots/wifi.png) |
+- Switch between **Dark**, **Light**, and *AMOLED Black* themes live.
+- Shows date, weather, `4×2` app grid, and search bar.
+- Persistent 3-button Android navigation bar sits at the bottom.
 
-| Bluetooth | Trackpad | Settings | System Info |
-| :---: | :---: | :---: | :---: |
-| ![Bluetooth](screenshots/bluetooth.png) | ![Trackpad](screenshots/trackpad.png) | ![Settings](screenshots/settings.png) | ![System Info](screenshots/sysinfo.png) |
+## Tap-Arrow App Pages
+
+![Home Page 2](screenshots/home_page2.png)
+
+- Tap **`Next`** (8th slot) to open the next page.
+- Tap **`Back`** (5th slot) to return to earlier apps.
+- <mark>No hard resistive-screen swiping</mark> required to browse apps.
+
+## Quick Settings Shade
+
+![Quick Settings](screenshots/quick_settings.png)
+
+- Pull down from the top status bar to open.
+- Toggle **Wi-Fi**, **Bluetooth**, **Airplane**, and **Torch** quickly.
+- Adjust screen brightness, **Reboot**, or **Shutdown** in one tap.
+
+## Bottom Menu Popup
+
+![Bottom Menu Popup](screenshots/hamburger_menu.png)
+
+- Tap the bottom-right **3-line button** anywhere in cydOS.
+- Jump straight to Quick Settings, Theme, Settings, or Sys Info.
+- Tap **Close App** to return home cleanly.
+
+## Material 3 Modals
+
+![Modal Dialog](screenshots/modal.png)
+
+- Reusable `m3_modal` dialogs with dimmed backdrop and rounded corners.
+- Supports action buttons, multi-step guides, and animated progress bars.
+
+## App Store
+
+![App Store](screenshots/app_store.png)
+
+- <mark>Install and run ESP32 `.bin` apps</mark> from flash or SD.
+- Browse **Explore**, **SD Card**, **Installed**, and **Tools** tabs.
+- New apps appear automatically at Home Screen slot `#1`.
+
+## Wi-Fi Manager
+
+![Wi-Fi](screenshots/wifi.png)
+
+- Scans nearby *2.4 GHz* Wi-Fi networks asynchronously.
+- Enter passwords with the slide-to-select on-screen keyboard.
+- Saves credentials to ESP32 NVS for automatic boot reconnect.
+
+## Bluetooth BLE Scanner
+
+![Bluetooth](screenshots/bluetooth.png)
+
+- Powered by lazy-initialized `NimBLE-Arduino` for low RAM use.
+- Lists nearby BLE device names, MAC addresses, and RSSI.
+
+## BLE Trackpad & Remote
+
+![Trackpad](screenshots/trackpad.png)
+
+- Works as a *Bluetooth HID* mouse and media remote.
+- Switch between **Pad** mode (with scroll strip) and **Remote** mode.
+
+## Settings
+
+![Settings](screenshots/settings.png)
+
+- Toggle **Wi-Fi**, **Bluetooth**, **AMOLED Black**, and **LED Haptics**.
+- Recalibrate resistive touch or tune tap sensitivity anytime.
+
+## System Info
+
+![System Info](screenshots/sysinfo.png)
+
+- Shows live ESP32 chip model, CPU speed, and flash size.
+- Tracks current free heap and minimum free heap block.
 
 ---
-
-## What It Does
-
-- **Material 3 UI**: Switch between **Dark**, **Light**, and *AMOLED Black* themes live.
-- **Tap-Arrow Pagination**: Use `Next` and `Back` tiles to flip app pages easily.
-- **App Store**: <mark>Install and run ESP32 `.bin` apps</mark> from flash or SD.
-- **Modular Apps**: Drop one `src/apps/app_*.cpp` file to add a new app.
-- **Wi-Fi & Browser**: Connect to 2.4 GHz Wi-Fi and read web pages.
-- **Android Companion**: Mirror the screen and reply to **WhatsApp** over local Wi-Fi.
-- **BLE Trackpad & Remote**: Control phones or Fire TV via *Bluetooth HID*.
-- **On-Screen Keyboard**: Slide across keys with a live floating key preview.
-- **Persistent Storage**: Save Wi-Fi, notes, timezone, and chats to ESP32 NVS.
 
 ## Supported Hardware
 
