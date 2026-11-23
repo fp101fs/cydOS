@@ -2,9 +2,10 @@
 
 An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
-![Navigation Demo](screenshots/cydos_demo.gif)
+https://github.com/user-attachments/assets/2e78e59f-e912-49e2-bb66-1ce1483235f8
 
-▶ **[Watch Full 3-Part Demo Video (MP4, 49s)](screenshots/cydos_full_demo.mp4)**
+
+
 
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
@@ -66,6 +67,10 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 - Shows date, weather, `4×2` app grid, and search bar.
 - Persistent 3-button Android navigation bar sits at the bottom.
 - *Note*: Top-bar cell signal bars are just for show.
+
+![Navigation Demo](screenshots/cydos_demo.gif)
+
+
 
 ## Tap-Arrow App Pages
 
