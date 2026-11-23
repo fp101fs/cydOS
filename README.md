@@ -4,9 +4,6 @@ An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
 https://github.com/user-attachments/assets/2e78e59f-e912-49e2-bb66-1ce1483235f8
 
-
-
-
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Contents
@@ -51,9 +48,9 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Live Demo
 
-| Bluetooth & Wi-Fi Scan | Browser & Keyboard |
-| :---: | :---: |
-| ![BT & Wi-Fi Demo](screenshots/cydos_bt_wifi.gif) | ![Keyboard Demo](screenshots/cydos_browser_kbd.gif) |
+| Navigation & Quick Settings | Bluetooth & Wi-Fi Scan | Browser & Keyboard |
+| :---: | :---: | :---: |
+| ![Navigation Demo](screenshots/cydos_demo.gif) | ![BT & Wi-Fi Demo](screenshots/cydos_bt_wifi.gif) | ![Keyboard Demo](screenshots/cydos_browser_kbd.gif) |
 
 - Real hardware captures from `ESP32-2432S028` (`cyd2usb`).
 
