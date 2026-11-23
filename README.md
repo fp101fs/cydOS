@@ -4,6 +4,8 @@ An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
 ![Navigation Demo](screenshots/cydos_demo.gif)
 
+▶ **[Watch Full 3-Part Demo Video (MP4, 49s)](screenshots/cydos_full_demo.mp4)**
+
 Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Contents
