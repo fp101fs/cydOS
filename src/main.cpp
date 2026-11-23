@@ -201,6 +201,22 @@ void loop() {
             clearOverlays();
             appManagerLaunchById("browser");
             m3KeyboardShow(nullptr);
+        } else if (ch == 'P') {
+            char buf[20] = "";
+            size_t len = 0;
+            uint32_t t0 = millis();
+            while (len + 1 < sizeof(buf) && (millis() - t0) < 200) {
+                if (Serial.available()) {
+                    int c = Serial.read();
+                    if (c == '\n' || c == '\r') break;
+                    buf[len++] = (char)c;
+                }
+            }
+            buf[len] = '\0';
+            int tx = 0, ty = 0;
+            if (sscanf(buf, "%d,%d", &tx, &ty) == 2) {
+                touchInjectTap((int16_t)tx, (int16_t)ty);
+            }
         } else if (ch == 'O') {
             char id[24] = "";
             size_t len = 0;

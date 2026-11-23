@@ -46,9 +46,11 @@ Runs on `ESP32-2432S028` boards with **LVGL 8.4** and **PlatformIO**.
 
 ## Live Demo
 
-![cydOS Demo](screenshots/cydos_demo.gif)
+| Navigation & Quick Settings | Bluetooth & Wi-Fi Scan | Browser & Keyboard |
+| :---: | :---: | :---: |
+| ![Navigation Demo](screenshots/cydos_demo.gif) | ![BT & Wi-Fi Demo](screenshots/cydos_bt_wifi.gif) | ![Keyboard Demo](screenshots/cydos_browser_kbd.gif) |
 
-- Home → `Next` → `Next` → **SqLine Lab** → Menu → **Quick Settings** → **Settings**.
+- Real hardware captures from `ESP32-2432S028` (`cyd2usb`).
 
 ## Home Screen (Dark & Light)
 
