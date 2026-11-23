@@ -2,6 +2,9 @@
 
 An **Android-inspired Material 3** OS for the *ESP32 Cheap Yellow Display*.
 
+- **Flash in Browser**: [Install cydOS now with the Web Flasher](https://fp101fs.github.io/cydOS/) *(Chrome / Edge)*
+- **Install with AI**: [Copy-paste the LLM setup prompt](#option-2-flash-with-an-llm)
+
 https://github.com/user-attachments/assets/2e78e59f-e912-49e2-bb66-1ce1483235f8
 
 Runs on `ESP32-2432S028` (CYD Cheap Yellow Display) boards using **LVGL 8.4** and **PlatformIO**.
