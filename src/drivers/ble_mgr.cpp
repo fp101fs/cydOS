@@ -1,8 +1,10 @@
 #include "ble_mgr.h"
+#include "wifi_mgr.h"
 #include "../theme/m3_theme.h"
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
+#include <WiFi.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -39,6 +41,7 @@ static bool ensureBleScanBufs() {
 
 static bool         s_initialized = false;
 static bool         s_scanning = false;
+static bool         s_pausedWifi = false;
 static uint32_t     s_scanStartMs = 0;
 static uint32_t     s_scanTimeoutMs = 0;
 static BleEvent     s_lastEvent = BleEvent::NONE;
@@ -206,23 +209,51 @@ static void bleScanCompleteCb(NimBLEScanResults results) {
     BLE_UNLOCK();
 }
 
+static void pauseWifiForBleIfNeeded(uint32_t minFreeHeap) {
+    if (ESP.getFreeHeap() >= minFreeHeap) return;
+    if (WiFi.getMode() == WIFI_OFF) return;
+    Serial.printf("[BLE] Pausing Wi-Fi to free DRAM (free=%lu B)\n",
+                  (unsigned long)ESP.getFreeHeap());
+    WiFi.disconnect(false);
+    WiFi.mode(WIFI_OFF);
+    g_sys.wifiConnected = false;
+    g_sys.wifiConnecting = false;
+    s_pausedWifi = true;
+    delay(80);
+    Serial.printf("[BLE] Heap after Wi-Fi pause: %lu B (maxBlk=%lu B)\n",
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+}
+
+static void restoreWifiAfterBle() {
+    if (!s_pausedWifi) return;
+    s_pausedWifi = false;
+    if (g_sys.wifiEnabled && !g_sys.airplaneMode) {
+        Serial.println("[BLE] Restoring Wi-Fi");
+        wifiMgrSetEnabled(true);
+    }
+}
+
 static bool ensureNimBleInit() {
     if (!ensureBleScanBufs()) return false;
     if (NimBLEDevice::getInitialized()) {
         s_initialized = true;
         return true;
     }
+    pauseWifiForBleIfNeeded(78000);
     uint32_t freeHeap = ESP.getFreeHeap();
     uint32_t maxBlock = ESP.getMaxAllocHeap();
     if (freeHeap < 48000 || maxBlock < 20000) {
         Serial.printf("[BLE] Low heap for NimBLE init (free=%lu maxBlk=%lu)\n",
                       (unsigned long)freeHeap, (unsigned long)maxBlock);
+        restoreWifiAfterBle();
         return false;
     }
     NimBLEDevice::init(BLE_DEVICE_NAME);
     s_initialized = NimBLEDevice::getInitialized();
     if (!s_initialized) {
         Serial.println("[BLE] NimBLE init failed");
+        restoreWifiAfterBle();
         return false;
     }
     Serial.printf("[BLE] NimBLE initialized (Free Heap: %lu B)\n",
@@ -332,14 +363,19 @@ bool bleMgrStartScan(uint32_t durationSec) {
         return false;
     }
 
+    // Ensure comfortable DRAM headroom during active BLE scan
+    pauseWifiForBleIfNeeded(38000);
+
     NimBLEScan* pScan = NimBLEDevice::getScan();
     if (!pScan) {
         s_lastEvent = BleEvent::SCAN_FAILED;
+        restoreWifiAfterBle();
         return false;
     }
 
     pScan->clearResults();
     pScan->setActiveScan(true);
+    pScan->setDuplicateFilter(true);
     // Wi-Fi coexistence friendly scan duty cycle (45 ms window / 100 ms interval)
     pScan->setInterval(100);
     pScan->setWindow(45);
@@ -356,6 +392,7 @@ bool bleMgrStartScan(uint32_t durationSec) {
         s_scanning = false;
         g_sys.btScanning = false;
         s_lastEvent = BleEvent::SCAN_FAILED;
+        restoreWifiAfterBle();
         return false;
     }
 
@@ -385,6 +422,7 @@ void bleMgrStopScan() {
     s_scanning = false;
     g_sys.btScanning = false;
     s_scanGen++;
+    restoreWifiAfterBle();
 }
 
 void bleMgrClearResults() {
@@ -426,6 +464,7 @@ bool bleMgrTick() {
             if (pScan) pScan->clearResults();
         }
         Serial.printf("[BLE] Scan complete: %u device(s)\n", (unsigned)s_scanCount);
+        restoreWifiAfterBle();
     } else if (s_scanning && (millis() - s_scanStartMs >= s_scanTimeoutMs)) {
         // Safety guard if NimBLE callback never fired
         Serial.println("[BLE] Scan timeout");
